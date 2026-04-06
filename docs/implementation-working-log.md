@@ -1,10 +1,10 @@
 # Implementation Working Log
 
 ## Current Snapshot
-- Current stage: Stage 7 - Implement the Mapping Layer and Card Selection Policy
-- Overall status: Stage 7 complete and manually validated (mapped/unmapped/ambiguous) with post-validation highlighting regression fix applied.
-- Active backend behavior: Anki read-path resolves strict eligible candidates and deterministic target selection; foreground highlighter regression in chunked fragment split bookkeeping has been patched.
-- Last updated: 2026-04-07 01:24:20 +10:00
+- Current stage: Stage 7B - Optimize Anki Mapping Parse Performance
+- Overall status: Stage 7B complete. Parse-time Anki mapping is now batched and near-parity with Jiten-only parse latency on the Stage 7B fixture page.
+- Active backend behavior: Anki read-path uses deduplicated term/config planning, batched `findNotes` via AnkiConnect `multi`, shared `notesInfo`/`cardsInfo` hydration, short-lived caches, and fallback to single-query lookup when batched mode fails.
+- Last updated: 2026-04-07 10:18:00 +10:00
 
 ## Architectural Decisions
 ### Decision: Keep Stage 0 output documentation-only
@@ -72,7 +72,7 @@
 
 ## In Progress
 - Task: None.
-- Current status: Stage 7 closed.
+- Current status: Stage 7B closed.
 - Next immediate step: Begin Stage 8 preflight when requested.
 
 ## Open Tasks
@@ -127,6 +127,188 @@
 - Stage 7 is now complete (including manual live-Anki validation and highlighting regression hardening).
 
 ## Run History
+### 2026-04-07 - Stage 7B Closure (Performance Acceptance + Handoff)
+- Completed:
+  - Finalized parse-read performance optimization for Anki mapping with:
+    - deduplicated lookup planning
+    - batched `findNotes` transport via AnkiConnect `multi`
+    - shared batched `notesInfo`/`cardsInfo` hydration
+    - short-lived in-memory caches and safe fallback behavior.
+  - Added profiling instrumentation and debug-gating fixes required to collect reliable runtime evidence from service-worker logs.
+  - Collected acceptance evidence on the target fixture page (`https://ja.wikipedia.org/wiki/%E6%97%A5%E6%9C%AC`) and compared Anki-enabled vs Anki-disabled runs.
+- Files changed:
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+  - `src/shared/anki/api.types.ts`
+  - `src/shared/anki/find-notes-many.ts`
+  - `src/background-worker/review-backend/review-backend.types.ts`
+  - `src/background-worker/parser/parser.ts`
+  - `src/shared/debug.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Use AnkiConnect `multi` batching for `findNotes` as the primary round-trip reduction mechanism.
+  - Keep previous single-query `findNotes` path as runtime fallback for resilience when `multi` is unavailable/failing.
+  - Keep Stage 7 matching/filter/selection semantics unchanged and limit optimization scope to request-shape/lookup orchestration.
+- Blockers / open issues:
+  - No active blocker for Stage 7B closure.
+  - Debug profiling logs are intentionally still available behind debug mode; remove or reduce verbosity in a later cleanup pass if desired.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+  - Profile evidence (same page fixture):
+    - pre-follow-up baseline (Anki enabled): `findNotesRequests: 238`, `reviewStateMs: ~14712`, `totalParseMs: ~16695`
+    - post-follow-up (Anki enabled): `findNotesRequests: 5`, `reviewStateMs: ~1289`, `totalParseMs: ~2373`
+    - Jiten-only comparison (Anki disabled): `totalParseMs: ~2251`
+  - Result: Anki-enabled parse is now close to Jiten-only latency and no longer dominated by lookup round-trips.
+- Next recommended step:
+  - Start Stage 8 preflight (or, if desired before Stage 8, do a small cleanup pass to trim/disable profiling instrumentation outside debug workflows).
+- Handoff:
+  - Stage 7B is complete and accepted with live profiling evidence.
+  - Next run should begin by reading this log, `docs/stage_execution_protocol.md`, and the Stage 8 target document.
+
+### 2026-04-07 - Stage 7B Follow-up Implementation (FindNotes Multi-Batch Pass)
+- Completed:
+  - Added AnkiConnect `multi` endpoint typing and a shared batched helper (`findNotesMany`) to execute many `findNotes` queries per request.
+  - Refactored Anki backend query-resolution path to:
+    - batch pending `findNotes` queries into fixed-size multi batches (`50` queries per request)
+    - execute those batches with existing bounded concurrency
+    - keep existing dedupe/cache semantics for query results.
+  - Added robust fallback behavior:
+    - if multi-batch execution fails, backend automatically falls back to the previous single-query `findNotes` path.
+    - per-query result normalization remains conservative (invalid/errored entries map to empty note ID lists).
+  - Preserved Stage 7 selection semantics and metadata contract (no matching/filter policy changes).
+- Files changed:
+  - `src/shared/anki/api.types.ts`
+  - `src/shared/anki/find-notes-many.ts`
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Optimize only request shape (`findNotes` transport batching) while retaining existing term/config dedupe keys and candidate resolution rules.
+  - Count `findNotesRequests` as actual issued network round-trips (multi batch count) for profiling fidelity.
+  - Keep single-query path as safe runtime fallback to protect parse integrity if `multi` is unavailable or fails.
+- Blockers / open issues:
+  - No compile/lint blocker.
+  - Live profile re-run on the Wikipedia fixture is required to quantify new request-count and latency deltas.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Reload extension and re-profile `https://ja.wikipedia.org/wiki/%E6%97%A5%E6%9C%AC` (cold + warm parse) and compare:
+    - `backendMetrics.findNotesRequests`
+    - `reviewStateMs`
+    - `totalParseMs`.
+
+### 2026-04-07 - Stage 7B Follow-up Start-of-Run (FindNotes Round-Trip Reduction)
+- Stage:
+  - Stage 7B follow-up optimization - reduce `findNotes` request fan-out on large parses.
+- Plan for this run:
+  - Implement batched `findNotes` execution via AnkiConnect `multi` requests to reduce transport round-trips while keeping Stage 7 mapping semantics unchanged.
+  - Preserve existing deduplication/cache behavior and keep safe fallback when batched lookup partially fails.
+  - Re-run lint/build and validate profiling metrics on the Wikipedia fixture.
+- Prerequisite observations:
+  - Current profiling on `https://ja.wikipedia.org/wiki/%E6%97%A5%E6%9C%AC` shows `reviewStateMs` dominating parse time (`~14.7s` of `~16.7s`) with `findNotesRequests: 238`.
+  - `notesInfo`/`cardsInfo` are already effectively batched (`1` each in sample), so remaining hotspot is `findNotes` request fan-out.
+- Risks/assumptions carried in:
+  - Risk: `multi` response shape variability/partial failures could alter mapping outcomes; mitigation is strict result normalization and conservative empty-result fallback per failed query.
+  - Assumption: reducing round-trips (not changing matching/filter rules) will materially reduce `reviewStateMs` on large pages.
+
+### 2026-04-07 - Stage 7B Profiling Fix (Profile-Scoped Debug Flag)
+- Completed:
+  - Fixed debug flag resolution in shared debug utility so debug mode follows active profile-scoped configuration keys (with legacy fallback).
+  - Added reactive refresh when profile or debug-related storage keys change, so background/content debug logs correctly enable without relying on legacy key shape.
+  - This unblocks Stage 7B parse profiling logs (`[DEBUG] ParseProfile`) in service-worker console when debug mode is enabled in settings.
+- Files changed:
+  - `src/shared/debug.ts`
+  - `docs/implementation-working-log.md`
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Reload extension, run parse on target page, and collect `ParseProfile` debug entries for cold/warm runs.
+
+### 2026-04-07 - Stage 7B Profiling Instrumentation (Debug Trace Pass)
+- Completed:
+  - Added parse-phase timing instrumentation in background parser flow (`jitenParseMs`, backend selection, review-state resolution, card build, token build, sentence pass, total parse).
+  - Added backend parse metrics hook (`getParseMetrics`) on review backend abstraction for optional backend-specific counters.
+  - Updated Anki backend metrics reporting to expose actual issued request counts per parse execution:
+    - `findNotes` requests issued (post-cache)
+    - `notesInfo` chunk requests issued (post-cache)
+    - `cardsInfo` chunk requests issued (post-cache)
+    - unique query/note/card counts.
+  - Routed profiling output through shared debug logging to keep output gated by existing debug mode.
+- Files changed:
+  - `src/background-worker/parser/parser.ts`
+  - `src/background-worker/review-backend/review-backend.types.ts`
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+  - `docs/implementation-working-log.md`
+- Blockers / open issues:
+  - No implementation blocker.
+  - Live profile capture on representative pages remains required to record concrete latency and request-count evidence.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Capture profiling logs on the target fixture page with debug mode enabled and compare first parse vs warm re-parse.
+
+### 2026-04-07 - Stage 7B Implementation (Batched Mapping Resolver Pass)
+- Completed:
+  - Reworked `AnkiReviewBackend.getParseReviewStates()` from per-term serial resolution to a batched lookup pipeline:
+    - unique term context extraction
+    - shared lookup-plan generation across term/config pairs
+    - deduplicated `findNotes` execution by unique query
+    - shared `notesInfo` and `cardsInfo` hydration across deduplicated ID sets.
+  - Added bounded-concurrency request execution for AnkiConnect lookups:
+    - `findNotes` limit = 6 concurrent queries
+    - `notesInfo` limit = 4 concurrent chunks
+    - `cardsInfo` limit = 4 concurrent chunks.
+  - Added short-lived in-memory lookup caches (15s TTL) for:
+    - `findNotes` query -> note IDs
+    - note ID -> `notesInfo` payload
+    - card ID -> `cardsInfo` payload.
+  - Preserved Stage 7 matching/filter/selection semantics:
+    - strict deck/model/template eligibility filtering unchanged
+    - exact word + optional reading checks unchanged
+    - deterministic ambiguity policy unchanged (`mapped` only when exactly one eligible target remains).
+  - Added lightweight parse metrics surface (`getLastParseMetrics`) to expose total terms, unique queries, unique hydrated IDs, and effective request counts for Stage 7B verification.
+- Files changed:
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Keep Stage 7B optimization fully localized to Anki parse-read lookup orchestration and avoid contract/schema changes.
+  - Use conservative short-lived in-memory caches only (no persistent storage), with natural TTL expiry as primary invalidation.
+  - Treat partial batched lookup failures as non-fatal and continue with available results so parse flow degrades to conservative unmapped outcomes instead of hard failure where possible.
+- Blockers / open issues:
+  - No compile/lint blocker.
+  - Representative real-Anki latency/request-count profiling is still required to quantify improvement against baseline on full-page parses.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Run controlled before/after parse sessions against representative pages and record:
+    - elapsed parse time
+    - count of `findNotes` / `notesInfo` / `cardsInfo` calls
+    - mapping outcome parity checks for mapped/unmapped/ambiguous fixtures.
+- Handoff:
+  - Stage 7B core optimisation code is in place and validated at lint/build level.
+  - Next run should focus on profiling evidence and semantic parity verification in live Anki data before stage closure.
+
+### 2026-04-07 - Stage 7B Start-of-Run
+- Stage:
+  - Stage 7B - Optimize Anki Mapping Parse Performance.
+- Plan for this run:
+  - Audit the current Stage 7 Anki mapping flow and identify per-term serial `findNotes`/`notesInfo`/`cardsInfo` hotspots.
+  - Refactor parse-time mapping to batch and deduplicate AnkiConnect requests across the parse set.
+  - Build indexed in-memory candidate resolution so term selection uses precomputed lookup structures rather than repeated scans.
+  - Add short-lived in-memory caches with explicit keys/TTL and safe invalidation triggers for repeated parse bursts.
+  - Preserve Stage 7 mapping semantics and metadata contract, then verify with lint/build plus request-count/latency evidence.
+- Prerequisite observations:
+  - Stage 7 mapping and selection semantics are already implemented and manually validated for mapped/unmapped/ambiguous outcomes.
+  - Stage 7 follow-up highlighter regression fixes are complete and verified, with no active Stage 7 blocker.
+  - Current known remaining gap for this stage is performance, not correctness, due to costly per-term serial AnkiConnect resolution.
+- Risks/assumptions carried in:
+  - Risk: performance refactor could change ambiguity or eligibility semantics; mitigation is to keep existing matching/filter/selection logic unchanged and only alter request shaping and data indexing.
+  - Risk: caching could surface stale mapping snapshots; mitigation is conservative short TTL and cache invalidation on configuration/profile transitions where available.
+  - Assumption: Stage 7B scope excludes UI/backend-selection/write-path changes and should remain strictly parse-read performance work.
+
 ### 2026-04-07 - Stage 7 Follow-up Implementation (Highlighting Regression Fix)
 - Completed:
   - Investigated reported symptom where a due-mapped token could coexist with an `unparsed` fragment and confuse visual state interpretation.

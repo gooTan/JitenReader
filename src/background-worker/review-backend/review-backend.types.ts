@@ -24,9 +24,12 @@ export type ReviewBackendCapabilities = {
   supportsSentenceAttach: boolean;
 };
 
+export type ReviewBackendParseMetrics = Record<string, number | string | boolean>;
+
 export interface ReviewBackend {
   getCapabilities(): ReviewBackendCapabilities;
   getParseReviewStates(vocabulary: JitenRawVocabulary[]): Promise<ReviewTermResolutionMap>;
+  getParseMetrics?(): ReviewBackendParseMetrics | undefined;
   gradeCard(wordId: number, readingIndex: number, rating: JitenRating): Promise<void>;
   getCardState(wordId: number, readingIndex: number): Promise<JitenCardState[]>;
   forgetCard(wordId: number, readingIndex: number): Promise<void>;

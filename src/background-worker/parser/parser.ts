@@ -1,3 +1,4 @@
+import { debug } from '@shared/debug';
 import { createReviewMetadata } from '@shared/jiten/create-review-metadata';
 import { mapReviewStates } from '@shared/jiten/map-review-states';
 import { parse } from '@shared/jiten/parse';
@@ -25,25 +26,56 @@ export class Parser {
   ) {}
 
   public async parse(): Promise<void> {
+    const parseStartedAt = performance.now();
     const paragraphs = this.batch.strings;
+    const jitenParseStartedAt = performance.now();
     const { tokens, vocabulary } = await parse(paragraphs);
+    const jitenParseMs = performance.now() - jitenParseStartedAt;
+    const backendSelectionStartedAt = performance.now();
     const backendStatus = await this.reviewBackendSelector.getStatus();
     const activeBackend = await this.reviewBackendSelector.getActiveBackend();
+    const backendSelectionMs = performance.now() - backendSelectionStartedAt;
+    const reviewStateStartedAt = performance.now();
     const { effectiveBackendStatus, parseReviewStates, effectiveBackend } =
       await this.getParseReviewStates(vocabulary, backendStatus, activeBackend);
+    const reviewStateMs = performance.now() - reviewStateStartedAt;
+    const cardBuildStartedAt = performance.now();
     const cards = this.vocabToCard(
       vocabulary,
       effectiveBackendStatus,
       parseReviewStates,
       effectiveBackend,
     );
+    const cardBuildMs = performance.now() - cardBuildStartedAt;
+    const tokenBuildStartedAt = performance.now();
     const parsedTokens = this.parseTokens(tokens, cards, vocabulary);
+    const tokenBuildMs = performance.now() - tokenBuildStartedAt;
+    const sentencePassStartedAt = performance.now();
 
     this.addSentenceInfo(paragraphs, parsedTokens);
+    const sentencePassMs = performance.now() - sentencePassStartedAt;
+    const totalParseMs = performance.now() - parseStartedAt;
 
     for (const [i, handle] of this.batch.handles.entries()) {
       handle.resolve(parsedTokens[i]);
     }
+
+    const backendMetrics = effectiveBackend.getParseMetrics?.();
+
+    debug('ParseProfile', {
+      backend: effectiveBackendStatus.activeBackend,
+      backendMetrics: backendMetrics ?? null,
+      backendSelectionMs,
+      cardBuildMs,
+      jitenParseMs,
+      paragraphCount: paragraphs.length,
+      reviewStateMs,
+      sentencePassMs,
+      tokenBuildMs,
+      tokenGroupCount: tokens.length,
+      totalParseMs,
+      vocabularyCount: vocabulary.length,
+    });
   }
 
   private extractRubiesFromAnnotated(input: string): JitenRuby[] {

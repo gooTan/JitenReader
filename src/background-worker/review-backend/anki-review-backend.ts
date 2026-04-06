@@ -1,5 +1,7 @@
+import { AnkiCardInfo, AnkiNoteInfo } from '@shared/anki/api.types';
 import { cardsInfo } from '@shared/anki/cards-info';
 import { findNotes } from '@shared/anki/find-notes';
+import { findNotesMany } from '@shared/anki/find-notes-many';
 import { getApiVersion } from '@shared/anki/get-api-version';
 import { notesInfo } from '@shared/anki/notes-info';
 import { DiscoverWordConfiguration } from '@shared/anki/types';
@@ -14,6 +16,7 @@ import { UnsupportedReviewOperationError } from './review-backend.errors';
 import {
   ReviewBackend,
   ReviewBackendCapabilities,
+  ReviewBackendParseMetrics,
   ReviewDeck,
   ReviewDeckAction,
   ReviewTermResolution,
@@ -25,7 +28,12 @@ const ANKI_REVIEW_BACKEND_CAPABILITIES: ReviewBackendCapabilities = {
   supportsSentenceAttach: false,
 };
 const READ_PROBE_CACHE_TTL_MS = 30_000;
+const LOOKUP_CACHE_TTL_MS = 15_000;
 const MAX_BATCH_IDS = 300;
+const FIND_NOTES_MULTI_BATCH_SIZE = 50;
+const FIND_NOTES_CONCURRENCY_LIMIT = 6;
+const NOTES_INFO_CONCURRENCY_LIMIT = 4;
+const CARDS_INFO_CONCURRENCY_LIMIT = 4;
 const ANKI_QUEUE_DUE_LEARNING = 1;
 const ANKI_QUEUE_DUE_REVIEW = 2;
 const ANKI_QUEUE_DUE_RELEARNING = 3;
@@ -43,9 +51,64 @@ type EligibleAnkiTargets = {
   templates: Set<number>;
 };
 
+type CacheEntry<T> = {
+  expiresAt: number;
+  value: T;
+};
+
+type TermContext = {
+  normalisedSpelling: string;
+  normalisedReading: string;
+  termKey: string;
+  vocabulary: JitenRawVocabulary;
+};
+
+type LookupConfig = {
+  config: DiscoverWordConfiguration;
+  id: string;
+  model: string;
+  wordField: string;
+};
+
+type LookupPlan = {
+  configId: string;
+  query: string;
+  termKey: string;
+};
+
+type ResolvePlanNoteIdsResult = {
+  issuedFindNotesRequests: number;
+  noteIdsByPlanKey: Map<string, number[]>;
+  uniqueQueries: number;
+};
+
+type ReadCardsResult = {
+  issuedCardsInfoRequests: number;
+  cardsById: Map<number, AnkiCardInfo>;
+};
+
+type ReadNotesResult = {
+  issuedNotesInfoRequests: number;
+  notesById: Map<number, AnkiNoteInfo>;
+};
+
+export type AnkiParseLookupMetrics = {
+  cardsInfoRequests: number;
+  findNotesRequests: number;
+  notesInfoRequests: number;
+  totalTerms: number;
+  uniqueCardIds: number;
+  uniqueNoteIds: number;
+  uniqueQueries: number;
+};
+
 export class AnkiReviewBackend implements ReviewBackend {
   private _cachedReadProbeExpiresAt = 0;
   private _inFlightReadProbe?: Promise<void>;
+  private _lastParseMetrics?: AnkiParseLookupMetrics;
+  private readonly _findNotesCache = new Map<string, CacheEntry<number[]>>();
+  private readonly _notesInfoCache = new Map<number, CacheEntry<AnkiNoteInfo>>();
+  private readonly _cardsInfoCache = new Map<number, CacheEntry<AnkiCardInfo>>();
 
   public getCapabilities(): ReviewBackendCapabilities {
     return ANKI_REVIEW_BACKEND_CAPABILITIES;
@@ -58,31 +121,64 @@ export class AnkiReviewBackend implements ReviewBackend {
 
     const readonlyConfigs = await getConfiguration('ankiReadonlyConfigs');
     const eligibleTargets = await this.getEligibleAnkiTargets(readonlyConfigs);
-    const statesByTermKey = new Map<string, ReviewTermResolution>();
+    const termContexts = this.getUniqueTermContexts(vocabulary);
 
-    for (const vocab of vocabulary) {
-      const termKey = this.getTermKey(vocab);
-
-      if (statesByTermKey.has(termKey)) {
-        continue;
-      }
-
-      const result = await this.resolveTerm(vocab, readonlyConfigs, eligibleTargets);
-
-      statesByTermKey.set(termKey, result);
+    if (readonlyConfigs.length === 0) {
+      return this.buildResolutionMapFromTerms(vocabulary, termContexts, () =>
+        this.createUnavailableResolution(),
+      );
     }
 
-    const states: ReviewTermResolutionMap = {};
-
-    for (const vocab of vocabulary) {
-      const key = `${vocab.wordId}/${vocab.readingIndex}`;
-      const termKey = this.getTermKey(vocab);
-      const result = statesByTermKey.get(termKey);
-
-      states[key] = result ?? this.createUnmappedResolution();
+    if (eligibleTargets.models.size === 0 || eligibleTargets.decks.size === 0) {
+      return this.buildResolutionMapFromTerms(vocabulary, termContexts, () =>
+        this.createUnavailableResolution(),
+      );
     }
 
-    return states;
+    const lookupConfigs = this.getLookupConfigs(readonlyConfigs);
+    const plans = this.createLookupPlans(termContexts, lookupConfigs);
+    const planLookupResult = await this.resolvePlanNoteIds(plans);
+    const notesLookupResult = await this.readNotesIndexed(
+      this.getUniqueIds(planLookupResult.noteIdsByPlanKey.values()),
+    );
+    const notesById = notesLookupResult.notesById;
+    const cardsLookupResult = await this.readCardsIndexed(
+      this.getUniqueIds(Array.from(notesById.values(), (note) => note.cards)),
+    );
+    const cardsById = cardsLookupResult.cardsById;
+
+    const resolutionsByTerm = new Map<string, ReviewTermResolution>();
+
+    for (const termContext of termContexts.values()) {
+      const resolution = this.resolveTermFromIndexes(
+        termContext,
+        lookupConfigs,
+        planLookupResult.noteIdsByPlanKey,
+        notesById,
+        cardsById,
+        eligibleTargets,
+      );
+
+      resolutionsByTerm.set(termContext.termKey, resolution);
+    }
+
+    this._lastParseMetrics = {
+      cardsInfoRequests: cardsLookupResult.issuedCardsInfoRequests,
+      findNotesRequests: planLookupResult.issuedFindNotesRequests,
+      notesInfoRequests: notesLookupResult.issuedNotesInfoRequests,
+      totalTerms: termContexts.size,
+      uniqueCardIds: cardsById.size,
+      uniqueNoteIds: notesById.size,
+      uniqueQueries: planLookupResult.uniqueQueries,
+    };
+
+    return this.buildResolutionMapFromTerms(vocabulary, termContexts, (termKey) => {
+      return resolutionsByTerm.get(termKey) ?? this.createUnmappedResolution();
+    });
+  }
+
+  public getParseMetrics(): ReviewBackendParseMetrics | undefined {
+    return this._lastParseMetrics;
   }
 
   public async getCardState(_wordId: number, _readingIndex: number): Promise<JitenCardState[]> {
@@ -131,38 +227,396 @@ export class AnkiReviewBackend implements ReviewBackend {
     }
   }
 
-  private async resolveTerm(
-    vocab: JitenRawVocabulary,
-    readonlyConfigs: DiscoverWordConfiguration[],
-    eligibleTargets: EligibleAnkiTargets,
-  ): Promise<ReviewTermResolution> {
-    if (readonlyConfigs.length === 0) {
-      return this.createUnavailableResolution();
-    }
+  private getUniqueTermContexts(vocabulary: JitenRawVocabulary[]): Map<string, TermContext> {
+    const contexts = new Map<string, TermContext>();
 
-    if (eligibleTargets.models.size === 0 || eligibleTargets.decks.size === 0) {
-      return this.createUnavailableResolution();
-    }
+    for (const vocab of vocabulary) {
+      const normalisedSpelling = this.normaliseTextValue(vocab.spelling);
+      const normalisedReading = this.normaliseReadingValue(vocab.reading);
+      const termKey = `${normalisedSpelling}\u0000${normalisedReading}`;
 
-    const candidates: AnkiTargetCandidate[] = [];
-    const seenTargets = new Set<string>();
-
-    for (const config of readonlyConfigs) {
-      const noteIds = await this.findMatchingNotes(vocab, config);
-
-      if (noteIds.length === 0) {
+      if (contexts.has(termKey)) {
         continue;
       }
 
-      const info = await this.getCandidatesFromNotes(vocab, config, noteIds, eligibleTargets);
+      contexts.set(termKey, {
+        normalisedSpelling,
+        normalisedReading,
+        termKey,
+        vocabulary: vocab,
+      });
+    }
 
-      for (const candidate of info) {
-        if (seenTargets.has(candidate.target.key)) {
+    return contexts;
+  }
+
+  private getLookupConfigs(configs: DiscoverWordConfiguration[]): LookupConfig[] {
+    return configs
+      .map((config, index) => {
+        const model = config.model?.trim();
+        const wordField = config.wordField?.trim();
+
+        if (!model?.length || !wordField?.length) {
+          return null;
+        }
+
+        return {
+          config,
+          id: `${index}:${model}:${wordField}`,
+          model,
+          wordField,
+        };
+      })
+      .filter((config): config is LookupConfig => Boolean(config));
+  }
+
+  private createLookupPlans(
+    termContexts: Map<string, TermContext>,
+    lookupConfigs: LookupConfig[],
+  ): LookupPlan[] {
+    const plans: LookupPlan[] = [];
+
+    for (const termContext of termContexts.values()) {
+      for (const lookupConfig of lookupConfigs) {
+        const queryParts = [
+          this.createAnkiQuerySegment('note', lookupConfig.model),
+          this.createAnkiQuerySegment(lookupConfig.wordField, termContext.vocabulary.spelling),
+        ];
+
+        const deck = lookupConfig.config.deck?.trim();
+
+        if (deck?.length) {
+          queryParts.push(this.createAnkiQuerySegment('deck', deck));
+        }
+
+        plans.push({
+          configId: lookupConfig.id,
+          query: queryParts.join(' '),
+          termKey: termContext.termKey,
+        });
+      }
+    }
+
+    return plans;
+  }
+
+  private async resolvePlanNoteIds(plans: LookupPlan[]): Promise<ResolvePlanNoteIdsResult> {
+    const now = Date.now();
+    const uniqueQueries = Array.from(new Set(plans.map((plan) => plan.query)));
+    const queryResults = new Map<string, number[]>();
+    const pendingQueries: string[] = [];
+
+    for (const query of uniqueQueries) {
+      const cached = this._findNotesCache.get(query);
+
+      if (cached && cached.expiresAt > now) {
+        queryResults.set(query, cached.value);
+      } else {
+        pendingQueries.push(query);
+      }
+    }
+
+    let issuedFindNotesRequests = 0;
+
+    if (pendingQueries.length > 0) {
+      try {
+        issuedFindNotesRequests = await this.resolvePendingQueriesWithMulti(
+          pendingQueries,
+          queryResults,
+          now,
+        );
+      } catch {
+        issuedFindNotesRequests = await this.resolvePendingQueriesWithSingles(
+          pendingQueries,
+          queryResults,
+          now,
+        );
+      }
+    }
+
+    const noteIdsByPlanKey = new Map<string, number[]>();
+
+    for (const plan of plans) {
+      const planKey = this.getPlanKey(plan.termKey, plan.configId);
+
+      noteIdsByPlanKey.set(planKey, queryResults.get(plan.query) ?? []);
+    }
+
+    return {
+      issuedFindNotesRequests,
+      noteIdsByPlanKey,
+      uniqueQueries: uniqueQueries.length,
+    };
+  }
+
+  private async resolvePendingQueriesWithMulti(
+    pendingQueries: string[],
+    queryResults: Map<string, number[]>,
+    now: number,
+  ): Promise<number> {
+    const queryBatches = this.chunkQueryBatch(pendingQueries, FIND_NOTES_MULTI_BATCH_SIZE);
+    const batchResults = await this.runTasksWithConcurrency(
+      queryBatches.map(
+        (
+          queries,
+        ): (() => Promise<{ noteIdsByQuery: Map<string, number[]>; requestCount: number }>) =>
+          async () => {
+            const results = await findNotesMany(queries, { showToastOnError: false });
+            const noteIdsByQuery = new Map<string, number[]>();
+
+            for (const [index, query] of queries.entries()) {
+              noteIdsByQuery.set(query, results[index] ?? []);
+            }
+
+            return {
+              noteIdsByQuery,
+              requestCount: 1,
+            };
+          },
+      ),
+      FIND_NOTES_CONCURRENCY_LIMIT,
+    );
+
+    let requestCount = 0;
+
+    for (const batchResult of batchResults) {
+      if (!batchResult) {
+        continue;
+      }
+
+      requestCount += batchResult.requestCount;
+
+      for (const [query, noteIds] of batchResult.noteIdsByQuery.entries()) {
+        queryResults.set(query, noteIds);
+        this._findNotesCache.set(query, {
+          expiresAt: now + LOOKUP_CACHE_TTL_MS,
+          value: noteIds,
+        });
+      }
+    }
+
+    return requestCount;
+  }
+
+  private async resolvePendingQueriesWithSingles(
+    pendingQueries: string[],
+    queryResults: Map<string, number[]>,
+    now: number,
+  ): Promise<number> {
+    const taskResults = await this.runTasksWithConcurrency(
+      pendingQueries.map(
+        (query): (() => Promise<{ query: string; noteIds: number[] }>) =>
+          async () => {
+            const noteIds = await findNotes(query, { showToastOnError: false });
+
+            return { query, noteIds };
+          },
+      ),
+      FIND_NOTES_CONCURRENCY_LIMIT,
+    );
+
+    let requestCount = 0;
+
+    for (const taskResult of taskResults) {
+      if (!taskResult) {
+        continue;
+      }
+
+      requestCount += 1;
+      queryResults.set(taskResult.query, taskResult.noteIds);
+      this._findNotesCache.set(taskResult.query, {
+        expiresAt: now + LOOKUP_CACHE_TTL_MS,
+        value: taskResult.noteIds,
+      });
+    }
+
+    return requestCount;
+  }
+
+  private async readNotesIndexed(noteIds: number[]): Promise<ReadNotesResult> {
+    const now = Date.now();
+    const indexed = new Map<number, AnkiNoteInfo>();
+    const missing = [];
+
+    for (const noteId of noteIds) {
+      const cached = this._notesInfoCache.get(noteId);
+
+      if (cached && cached.expiresAt > now) {
+        indexed.set(noteId, cached.value);
+      } else {
+        missing.push(noteId);
+      }
+    }
+
+    if (missing.length === 0) {
+      return {
+        issuedNotesInfoRequests: 0,
+        notesById: indexed,
+      };
+    }
+
+    const chunks = this.chunkIds(missing);
+    const chunkResults = await this.runTasksWithConcurrency(
+      chunks.map(
+        (chunk): (() => Promise<AnkiNoteInfo[]>) =>
+          () =>
+            notesInfo(chunk, { showToastOnError: false }),
+      ),
+      NOTES_INFO_CONCURRENCY_LIMIT,
+    );
+
+    for (const chunk of chunkResults) {
+      if (!chunk) {
+        continue;
+      }
+
+      for (const note of chunk) {
+        indexed.set(note.noteId, note);
+        this._notesInfoCache.set(note.noteId, {
+          expiresAt: now + LOOKUP_CACHE_TTL_MS,
+          value: note,
+        });
+      }
+    }
+
+    return {
+      issuedNotesInfoRequests: chunks.length,
+      notesById: indexed,
+    };
+  }
+
+  private async readCardsIndexed(cardIds: number[]): Promise<ReadCardsResult> {
+    const now = Date.now();
+    const indexed = new Map<number, AnkiCardInfo>();
+    const missing = [];
+
+    for (const cardId of cardIds) {
+      const cached = this._cardsInfoCache.get(cardId);
+
+      if (cached && cached.expiresAt > now) {
+        indexed.set(cardId, cached.value);
+      } else {
+        missing.push(cardId);
+      }
+    }
+
+    if (missing.length === 0) {
+      return {
+        issuedCardsInfoRequests: 0,
+        cardsById: indexed,
+      };
+    }
+
+    const chunks = this.chunkIds(missing);
+    const chunkResults = await this.runTasksWithConcurrency(
+      chunks.map(
+        (chunk): (() => Promise<AnkiCardInfo[]>) =>
+          () =>
+            cardsInfo(chunk, { showToastOnError: false }),
+      ),
+      CARDS_INFO_CONCURRENCY_LIMIT,
+    );
+
+    for (const chunk of chunkResults) {
+      if (!chunk) {
+        continue;
+      }
+
+      for (const card of chunk) {
+        indexed.set(card.cardId, card);
+        this._cardsInfoCache.set(card.cardId, {
+          expiresAt: now + LOOKUP_CACHE_TTL_MS,
+          value: card,
+        });
+      }
+    }
+
+    return {
+      issuedCardsInfoRequests: chunks.length,
+      cardsById: indexed,
+    };
+  }
+
+  private resolveTermFromIndexes(
+    termContext: TermContext,
+    lookupConfigs: LookupConfig[],
+    noteIdsByPlanKey: Map<string, number[]>,
+    notesById: Map<number, AnkiNoteInfo>,
+    cardsById: Map<number, AnkiCardInfo>,
+    eligibleTargets: EligibleAnkiTargets,
+  ): ReviewTermResolution {
+    const candidates: AnkiTargetCandidate[] = [];
+    const seenTargets = new Set<string>();
+
+    for (const lookupConfig of lookupConfigs) {
+      const planKey = this.getPlanKey(termContext.termKey, lookupConfig.id);
+      const noteIds = noteIdsByPlanKey.get(planKey) ?? [];
+
+      for (const noteId of noteIds) {
+        const note = notesById.get(noteId);
+
+        if (!note || !eligibleTargets.models.has(note.modelName)) {
           continue;
         }
 
-        candidates.push(candidate);
-        seenTargets.add(candidate.target.key);
+        const wordValue = this.normaliseTextValue(note.fields[lookupConfig.wordField]?.value ?? '');
+
+        if (wordValue !== termContext.normalisedSpelling) {
+          continue;
+        }
+
+        const readingField = lookupConfig.config.readingField?.trim();
+
+        if (readingField?.length) {
+          const noteReading = this.normaliseReadingValue(note.fields[readingField]?.value ?? '');
+
+          if (noteReading !== termContext.normalisedReading) {
+            continue;
+          }
+        }
+
+        for (const cardId of note.cards) {
+          const card = cardsById.get(cardId);
+
+          if (!card) {
+            continue;
+          }
+
+          if (!eligibleTargets.decks.has(card.deckName)) {
+            continue;
+          }
+
+          if (!eligibleTargets.models.has(card.modelName)) {
+            continue;
+          }
+
+          if (!eligibleTargets.templates.has(card.ord)) {
+            continue;
+          }
+
+          const due = this.isCardDue(card.queue);
+          const candidate: AnkiTargetCandidate = {
+            target: {
+              key: `anki:${card.cardId}`,
+              wordId: termContext.vocabulary.wordId,
+              readingIndex: termContext.vocabulary.readingIndex,
+              ankiNoteId: card.note,
+              ankiCardId: card.cardId,
+              ankiDeck: card.deckName,
+              ankiModel: card.modelName,
+              ankiTemplateOrd: card.ord,
+            },
+            stateTags: due ? [JitenCardState.DUE, JitenCardState.YOUNG] : [JitenCardState.YOUNG],
+            dueState: due ? 'due' : 'notDue',
+          };
+
+          if (seenTargets.has(candidate.target.key)) {
+            continue;
+          }
+
+          candidates.push(candidate);
+          seenTargets.add(candidate.target.key);
+        }
       }
     }
 
@@ -192,108 +646,14 @@ export class AnkiReviewBackend implements ReviewBackend {
     };
   }
 
-  private findMatchingNotes(
-    vocab: JitenRawVocabulary,
-    config: DiscoverWordConfiguration,
-  ): Promise<number[]> {
-    const model = config.model?.trim();
-    const wordField = config.wordField?.trim();
-
-    if (!model?.length || !wordField?.length) {
-      return [];
-    }
-
-    const queryParts = [
-      this.createAnkiQuerySegment('note', model),
-      this.createAnkiQuerySegment(wordField, vocab.spelling),
-    ];
-
-    if (config.deck?.trim().length) {
-      queryParts.push(this.createAnkiQuerySegment('deck', config.deck.trim()));
-    }
-
-    const query = queryParts.join(' ');
-
-    return findNotes(query, { showToastOnError: false });
-  }
-
-  private async getCandidatesFromNotes(
-    vocab: JitenRawVocabulary,
-    config: DiscoverWordConfiguration,
-    noteIds: number[],
-    eligibleTargets: EligibleAnkiTargets,
-  ): Promise<AnkiTargetCandidate[]> {
-    const notes = await this.readNotesInChunks(noteIds);
-    const eligibleNotes = notes.filter((note) => {
-      if (!eligibleTargets.models.has(note.modelName)) {
-        return false;
-      }
-
-      const wordValue = this.normaliseTextValue(note.fields[config.wordField]?.value ?? '');
-
-      if (wordValue !== this.normaliseTextValue(vocab.spelling)) {
-        return false;
-      }
-
-      if (!config.readingField?.trim().length) {
-        return true;
-      }
-
-      const noteReading = this.normaliseReadingValue(note.fields[config.readingField]?.value ?? '');
-      const vocabReading = this.normaliseReadingValue(vocab.reading);
-
-      return noteReading === vocabReading;
-    });
-
-    const cardIds = eligibleNotes.flatMap((note) => note.cards);
-
-    if (cardIds.length === 0) {
-      return [];
-    }
-
-    const cards = await this.readCardsInChunks(cardIds);
-    const candidates: AnkiTargetCandidate[] = [];
-
-    for (const card of cards) {
-      if (!eligibleTargets.decks.has(card.deckName)) {
-        continue;
-      }
-
-      if (!eligibleTargets.models.has(card.modelName)) {
-        continue;
-      }
-
-      if (!eligibleTargets.templates.has(card.ord)) {
-        continue;
-      }
-
-      const due = this.isCardDue(card.queue);
-
-      candidates.push({
-        target: {
-          key: `anki:${card.cardId}`,
-          wordId: vocab.wordId,
-          readingIndex: vocab.readingIndex,
-          ankiNoteId: card.note,
-          ankiCardId: card.cardId,
-          ankiDeck: card.deckName,
-          ankiModel: card.modelName,
-          ankiTemplateOrd: card.ord,
-        },
-        stateTags: due ? [JitenCardState.DUE, JitenCardState.YOUNG] : [JitenCardState.YOUNG],
-        dueState: due ? 'due' : 'notDue',
-      });
-    }
-
-    return candidates;
-  }
-
   private async getEligibleAnkiTargets(
     readonlyConfigs: DiscoverWordConfiguration[],
   ): Promise<EligibleAnkiTargets> {
-    const mining = await getConfiguration('ankiMiningConfig');
-    const blacklist = await getConfiguration('ankiBlacklistConfig');
-    const neverForget = await getConfiguration('ankiNeverForgetConfig');
+    const [mining, blacklist, neverForget] = await Promise.all([
+      getConfiguration('ankiMiningConfig'),
+      getConfiguration('ankiBlacklistConfig'),
+      getConfiguration('ankiNeverForgetConfig'),
+    ]);
     const decks = new Set<string>();
     const models = new Set<string>();
 
@@ -324,36 +684,24 @@ export class AnkiReviewBackend implements ReviewBackend {
     };
   }
 
-  private async readNotesInChunks(noteIds: number[]): ReturnType<typeof notesInfo> {
-    const chunks = this.chunkIds(noteIds);
-    const merged = [];
+  private buildResolutionMapFromTerms(
+    vocabulary: JitenRawVocabulary[],
+    termContexts: Map<string, TermContext>,
+    getResolutionForTerm: (termKey: string) => ReviewTermResolution,
+  ): ReviewTermResolutionMap {
+    const states: ReviewTermResolutionMap = {};
 
-    for (const chunk of chunks) {
-      const chunkResult = await notesInfo(chunk, { showToastOnError: false });
+    for (const vocab of vocabulary) {
+      const termKey = this.getTermKey(vocab);
+      const context = termContexts.get(termKey);
+      const key = `${vocab.wordId}/${vocab.readingIndex}`;
 
-      merged.push(...chunkResult);
+      states[key] = context
+        ? getResolutionForTerm(context.termKey)
+        : this.createUnmappedResolution();
     }
 
-    return merged;
-  }
-
-  private async readCardsInChunks(cardIds: number[]): ReturnType<typeof cardsInfo> {
-    const chunks = this.chunkIds(cardIds);
-    const merged = [];
-
-    for (const chunk of chunks) {
-      const chunkResult = await cardsInfo(chunk, { showToastOnError: false });
-
-      merged.push(...chunkResult);
-    }
-
-    return merged;
-  }
-
-  private createAnkiQuerySegment(field: string, value: string): string {
-    const escaped = value.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
-
-    return `${field}:"${escaped}"`;
+    return states;
   }
 
   private getTermKey(vocab: JitenRawVocabulary): string {
@@ -361,6 +709,28 @@ export class AnkiReviewBackend implements ReviewBackend {
     const reading = this.normaliseReadingValue(vocab.reading);
 
     return `${spelling}\u0000${reading}`;
+  }
+
+  private getPlanKey(termKey: string, configId: string): string {
+    return `${termKey}\u0000${configId}`;
+  }
+
+  private getUniqueIds(idGroups: Iterable<number[]>): number[] {
+    const ids = new Set<number>();
+
+    for (const group of idGroups) {
+      for (const id of group) {
+        ids.add(id);
+      }
+    }
+
+    return Array.from(ids);
+  }
+
+  private createAnkiQuerySegment(field: string, value: string): string {
+    const escaped = value.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
+
+    return `${field}:"${escaped}"`;
   }
 
   private normaliseTextValue(value: string): string {
@@ -397,6 +767,44 @@ export class AnkiReviewBackend implements ReviewBackend {
     }
 
     return chunks;
+  }
+
+  private chunkQueryBatch(queries: string[], chunkSize: number): string[][] {
+    const chunks = [];
+
+    for (let i = 0; i < queries.length; i += chunkSize) {
+      chunks.push(queries.slice(i, i + chunkSize));
+    }
+
+    return chunks;
+  }
+
+  private async runTasksWithConcurrency<T>(
+    tasks: (() => Promise<T>)[],
+    concurrencyLimit: number,
+  ): Promise<(T | undefined)[]> {
+    const results = Array.from({ length: tasks.length }, (): T | undefined => undefined);
+
+    let cursor = 0;
+    const workerCount = Math.max(1, Math.min(concurrencyLimit, tasks.length));
+
+    const workers = Array.from({ length: workerCount }, async () => {
+      while (cursor < tasks.length) {
+        const index = cursor;
+
+        cursor += 1;
+
+        try {
+          results[index] = await tasks[index]();
+        } catch {
+          results[index] = undefined;
+        }
+      }
+    });
+
+    await Promise.all(workers);
+
+    return results;
   }
 
   private createUnavailableResolution(): ReviewTermResolution {
