@@ -838,6 +838,7 @@ export class TextHighlighter extends BaseTextHighlighter {
 
         if (token.start < fragment.start) {
           tokens.push(token);
+          this._fragmentToTokensMap.get(fragment)?.push(token);
           this._tokenToFragmentsMap.get(token)?.push(fragment);
 
           break;
@@ -846,7 +847,11 @@ export class TextHighlighter extends BaseTextHighlighter {
         if (!this.canSplitFragmentAt(fragment, token.start)) {
           this.fixFragmentParameters(fragment);
 
-          continue;
+          tokens.push(token);
+          this._fragmentToTokensMap.get(fragment)?.push(token);
+          this._tokenToFragmentsMap.get(token)?.push(fragment);
+
+          break;
         }
 
         const newFragmentNode = this.splitFragmentsNode(fragment, token.start);

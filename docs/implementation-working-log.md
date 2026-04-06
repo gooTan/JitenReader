@@ -2,9 +2,9 @@
 
 ## Current Snapshot
 - Current stage: Stage 7 - Implement the Mapping Layer and Card Selection Policy
-- Overall status: Stage 7 implementation pass complete and verified with lint/build; stage validation against live Anki data pending.
-- Active backend behavior: Anki read-path now resolves term-level mapping candidates with strict eligibility filters and deterministic target policy (single safe match only), while retaining Jiten fallback on backend read failures.
-- Last updated: 2026-04-07 00:20:20 +10:00
+- Overall status: Stage 7 complete and manually validated (mapped/unmapped/ambiguous) with post-validation highlighting regression fix applied.
+- Active backend behavior: Anki read-path resolves strict eligible candidates and deterministic target selection; foreground highlighter regression in chunked fragment split bookkeeping has been patched.
+- Last updated: 2026-04-07 01:24:20 +10:00
 
 ## Architectural Decisions
 ### Decision: Keep Stage 0 output documentation-only
@@ -71,9 +71,9 @@
   - No source/runtime behavior files in `src/` were modified.
 
 ## In Progress
-- Task: Stage 7 validation and hardening.
-- Current status: Stage 7 implementation code landed; functional validation pending.
-- Next immediate step: Validate mapping outcomes on live Anki datasets for unmapped/single-match/ambiguous terms and adjust strict policy edges if needed.
+- Task: None.
+- Current status: Stage 7 closed.
+- Next immediate step: Begin Stage 8 preflight when requested.
 
 ## Open Tasks
 - [x] Trace page parsing and enrichment ownership in content scripts and background worker.
@@ -124,8 +124,51 @@
   - next target stage document in `docs/stages/`
   - `docs/stages/stage_6_implement_anki_read_only_backend_shell.md`
 - Resume at the next stage only; do not reopen Stage 6 unless regressions are found.
+- Stage 7 is now complete (including manual live-Anki validation and highlighting regression hardening).
 
 ## Run History
+### 2026-04-07 - Stage 7 Follow-up Implementation (Highlighting Regression Fix)
+- Completed:
+  - Investigated reported symptom where a due-mapped token could coexist with an `unparsed` fragment and confuse visual state interpretation.
+  - Identified regression in chunked split flow: when restoring token ownership in `splitMultiTokenFragmentsChunked`, fragment->token map was not restored alongside token->fragment map.
+  - Patched `TextHighlighter` to restore both map directions in the `token.start < fragment.start` branch.
+  - Applied second hardening patch in the same chunked split flow:
+    - when start split is unsafe (`!canSplitFragmentAt`), token ownership is now restored and loop breaks instead of silently dropping the token.
+  - Completed post-fix browser re-validation with user:
+    - duplicate `unparsed` artifact for `一方` is resolved
+    - both `一方` occurrences now render as mapped token elements with consistent due-related classes and IDs.
+- Files changed:
+  - `src/apps/text-highlighter/text-highlighter.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Keep fix minimal and local to chunked fragment splitting map bookkeeping to avoid changing broader parse/highlight ownership behavior.
+- Blockers / open issues:
+  - No blocker.
+  - Browser re-check remains recommended to confirm the specific duplicate `unparsed` artifact no longer appears on the reported page.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+  - Stage 7 live manual validation confirmed mapped/unmapped/ambiguous backend resolution paths.
+  - Stage 7 live manual verification after highlighter fixes confirms no conflicting `unparsed` wrapper for mapped `一方` terms on the fixture page.
+- Next recommended step:
+  - Re-parse the Stage 7 fixture page in browser and confirm `一方` occurrences no longer present conflicting `unparsed` wrappers where token mapping exists.
+- Handoff:
+  - Stage 7 is complete. Next run should begin with Stage 8 preflight unless additional Stage 7 regressions are observed.
+
+### 2026-04-07 - Stage 7 Follow-up Start-of-Run (Highlighting Regression Fix)
+- Stage:
+  - Stage 7 follow-up hardening (post-implementation regression fix).
+- Plan for this run:
+  - Investigate reported mismatch where a mapped due term appears as an additional `unparsed` DOM token and does not consistently render expected due styling.
+  - Patch highlighter fragment/token bookkeeping so token-owned fragments are not incorrectly left as unparsed leftovers.
+  - Verify with lint/build and note browser verification expectations.
+- Prerequisite observations:
+  - Stage 7 mapping behavior has been manually validated in browser for mapped/unmapped/ambiguous term resolution.
+  - The reported symptom appears in foreground rendering/highlighting, not backend Anki mapping selection.
+- Risks/assumptions carried in:
+  - Risk: touching split/map bookkeeping could regress previous split-boundary hardening behavior.
+  - Mitigation: apply targeted fix only to token-fragment map restoration path and verify with lint/build.
+
 ### 2026-04-07 - Stage 7 Implementation (Mapping Layer + Card Selection Policy)
 - Completed:
   - Extended backend parse-state abstraction to return explicit per-term resolution metadata (state tags + mapping/due/target states + optional target payload) instead of state tags alone.
