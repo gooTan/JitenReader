@@ -12,7 +12,7 @@ import {
   ReviewBackendCapabilities,
   ReviewDeck,
   ReviewDeckAction,
-  ReviewTermStateMap,
+  ReviewTermResolutionMap,
 } from './review-backend.types';
 
 const JITEN_REVIEW_BACKEND_CAPABILITIES: ReviewBackendCapabilities = {
@@ -25,11 +25,25 @@ export class JitenReviewBackend implements ReviewBackend {
     return JITEN_REVIEW_BACKEND_CAPABILITIES;
   }
 
-  public getParseReviewStates(vocabulary: JitenRawVocabulary[]): Promise<ReviewTermStateMap> {
-    const states: ReviewTermStateMap = {};
+  public getParseReviewStates(vocabulary: JitenRawVocabulary[]): Promise<ReviewTermResolutionMap> {
+    const states: ReviewTermResolutionMap = {};
 
     for (const { wordId, readingIndex, knownState } of vocabulary) {
-      states[`${wordId}/${readingIndex}`] = mapReviewStates(knownState, JitenCardState.MATURE);
+      const stateTags = mapReviewStates(knownState, JitenCardState.MATURE);
+      const dueState = stateTags.includes(JitenCardState.DUE) ? 'due' : 'notDue';
+      const key = `${wordId}/${readingIndex}`;
+
+      states[key] = {
+        stateTags,
+        mappingState: 'mapped',
+        dueState,
+        targetState: 'selected',
+        target: {
+          key,
+          wordId,
+          readingIndex,
+        },
+      };
     }
 
     return Promise.resolve(states);

@@ -10,7 +10,11 @@ import {
 } from '@shared/jiten/types';
 import { ReviewBackendSelector } from '../review-backend/review-backend-selector';
 import { ReviewBackendStatus } from '../review-backend/review-backend-selector.types';
-import { ReviewBackend, ReviewTermStateMap } from '../review-backend/review-backend.types';
+import {
+  ReviewBackend,
+  ReviewTermResolution,
+  ReviewTermResolutionMap,
+} from '../review-backend/review-backend.types';
 import { Batch } from './parser.types';
 import { getPitchClass } from './pitch-accent-utils';
 
@@ -83,7 +87,7 @@ export class Parser {
   private vocabToCard(
     vocabulary: JitenRawVocabulary[],
     backendStatus: ReviewBackendStatus,
-    parseReviewStates: ReviewTermStateMap,
+    parseReviewStates: ReviewTermResolutionMap,
     activeBackend: ReviewBackend,
   ): JitenCard[] {
     return vocabulary.map((vocab) => {
@@ -100,12 +104,13 @@ export class Parser {
         pitchAccents,
       } = vocab;
 
-      const cardState = this.enrichCardReviewState(
+      const reviewResolution = this.getReviewResolution(
         vocab,
         knownState,
         backendStatus,
         parseReviewStates,
       );
+      const cardState = reviewResolution.stateTags;
       const reviewMetadata = createReviewMetadata({
         backend: backendStatus.activeBackend,
         wordId,
@@ -113,6 +118,10 @@ export class Parser {
         stateTags: cardState,
         freshness: 'stale',
         actionsAvailable: activeBackend.getCapabilities().supportsDeckActions,
+        mappingState: reviewResolution.mappingState,
+        dueState: reviewResolution.dueState,
+        targetState: reviewResolution.targetState,
+        target: reviewResolution.target,
       });
 
       return {
@@ -135,12 +144,12 @@ export class Parser {
     });
   }
 
-  private enrichCardReviewState(
+  private getReviewResolution(
     vocabulary: JitenRawVocabulary,
     knownState: number[],
     backendStatus: ReviewBackendStatus,
-    parseReviewStates: ReviewTermStateMap,
-  ): JitenCardState[] {
+    parseReviewStates: ReviewTermResolutionMap,
+  ): ReviewTermResolution {
     const key = `${vocabulary.wordId}/${vocabulary.readingIndex}`;
 
     if (parseReviewStates[key]) {
@@ -148,8 +157,19 @@ export class Parser {
     }
 
     const fallbackState = this.getReviewStateFallback(backendStatus);
+    const stateTags = mapReviewStates(knownState, fallbackState);
 
-    return mapReviewStates(knownState, fallbackState);
+    return {
+      stateTags,
+      mappingState: 'mapped',
+      dueState: stateTags.includes(JitenCardState.DUE) ? 'due' : 'notDue',
+      targetState: 'selected',
+      target: {
+        key,
+        wordId: vocabulary.wordId,
+        readingIndex: vocabulary.readingIndex,
+      },
+    };
   }
 
   private getReviewStateFallback(backendStatus: ReviewBackendStatus): JitenCardState {
@@ -168,7 +188,7 @@ export class Parser {
     activeBackend: ReviewBackend,
   ): Promise<{
     effectiveBackendStatus: ReviewBackendStatus;
-    parseReviewStates: ReviewTermStateMap;
+    parseReviewStates: ReviewTermResolutionMap;
     effectiveBackend: ReviewBackend;
   }> {
     try {

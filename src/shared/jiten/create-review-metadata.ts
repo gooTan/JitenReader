@@ -1,4 +1,13 @@
-import { JitenCardState, JitenReviewBackend, ReviewFreshnessState, ReviewMetadata } from './types';
+import {
+  JitenCardState,
+  JitenReviewBackend,
+  ReviewDueState,
+  ReviewFreshnessState,
+  ReviewMappingState,
+  ReviewMetadata,
+  ReviewTargetMetadata,
+  ReviewTargetState,
+} from './types';
 
 type CreateReviewMetadataArgs = {
   backend: JitenReviewBackend;
@@ -7,6 +16,10 @@ type CreateReviewMetadataArgs = {
   stateTags: JitenCardState[];
   freshness: ReviewFreshnessState;
   actionsAvailable: boolean;
+  mappingState?: ReviewMappingState;
+  dueState?: ReviewDueState;
+  targetState?: ReviewTargetState;
+  target?: ReviewTargetMetadata;
 };
 
 export const createReviewMetadata = ({
@@ -16,25 +29,34 @@ export const createReviewMetadata = ({
   stateTags,
   freshness,
   actionsAvailable,
+  mappingState: providedMappingState,
+  dueState: providedDueState,
+  targetState: providedTargetState,
+  target: providedTarget,
 }: CreateReviewMetadataArgs): ReviewMetadata => {
-  const mappingState = stateTags.length > 0 ? 'mapped' : 'unmapped';
-  const dueState = stateTags.includes(JitenCardState.DUE)
-    ? 'due'
-    : mappingState === 'mapped'
-      ? 'notDue'
-      : 'unknown';
+  const mappingState = providedMappingState ?? (stateTags.length > 0 ? 'mapped' : 'unmapped');
+  const dueState =
+    providedDueState ??
+    (stateTags.includes(JitenCardState.DUE)
+      ? 'due'
+      : mappingState === 'mapped'
+        ? 'notDue'
+        : 'unknown');
+  const targetState = providedTargetState ?? (mappingState === 'mapped' ? 'selected' : 'none');
+  const target =
+    providedTarget ??
+    (mappingState === 'mapped'
+      ? { key: `${wordId}/${readingIndex}`, wordId, readingIndex }
+      : undefined);
 
   return {
     backend,
     mappingState,
     dueState,
-    targetState: mappingState === 'mapped' ? 'selected' : 'none',
-    target:
-      mappingState === 'mapped'
-        ? { key: `${wordId}/${readingIndex}`, wordId, readingIndex }
-        : undefined,
+    targetState,
+    target,
     freshness,
-    actionsAvailable: actionsAvailable && mappingState === 'mapped',
+    actionsAvailable: actionsAvailable && targetState === 'selected',
     stateTags,
   };
 };

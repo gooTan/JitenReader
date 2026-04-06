@@ -1,10 +1,10 @@
 # Implementation Working Log
 
 ## Current Snapshot
-- Current stage: Stage 6 - Implement the Anki read-only backend shell
-- Overall status: Stage 6 complete and verified.
-- Active backend behavior: Parse/enrichment now routes through backend-owned parse state providers, including an Anki read-only backend shell with safe fallback to Jiten on read-path failure.
-- Last updated: 2026-04-06 23:41:50 +10:00
+- Current stage: Stage 7 - Implement the Mapping Layer and Card Selection Policy
+- Overall status: Stage 7 implementation pass complete and verified with lint/build; stage validation against live Anki data pending.
+- Active backend behavior: Anki read-path now resolves term-level mapping candidates with strict eligibility filters and deterministic target policy (single safe match only), while retaining Jiten fallback on backend read failures.
+- Last updated: 2026-04-07 00:20:20 +10:00
 
 ## Architectural Decisions
 ### Decision: Keep Stage 0 output documentation-only
@@ -71,9 +71,9 @@
   - No source/runtime behavior files in `src/` were modified.
 
 ## In Progress
-- Task: None.
-- Current status: Stage 6 closed.
-- Next immediate step: Begin Stage 7 preflight from stage docs and keep Stage 5 metadata contract stable.
+- Task: Stage 7 validation and hardening.
+- Current status: Stage 7 implementation code landed; functional validation pending.
+- Next immediate step: Validate mapping outcomes on live Anki datasets for unmapped/single-match/ambiguous terms and adjust strict policy edges if needed.
 
 ## Open Tasks
 - [x] Trace page parsing and enrichment ownership in content scripts and background worker.
@@ -88,7 +88,7 @@
 
 ## Known Issues / Blockers
 - The path `docs/stages/stage-0-codebase-reconnaissance-and-architecture-map.md` is not present; canonical file is `docs/stages/stage_0_codebase_reconnaissance_and_architecture_map.md`.
-- No active blocker for current Stage 2 implementation.
+- No active blocker for current Stage 7 implementation.
 
 ## Verification Status
 - Verified:
@@ -126,6 +126,69 @@
 - Resume at the next stage only; do not reopen Stage 6 unless regressions are found.
 
 ## Run History
+### 2026-04-07 - Stage 7 Implementation (Mapping Layer + Card Selection Policy)
+- Completed:
+  - Extended backend parse-state abstraction to return explicit per-term resolution metadata (state tags + mapping/due/target states + optional target payload) instead of state tags alone.
+  - Updated parse enrichment to consume backend-provided mapping resolution and preserve explicit ambiguous/unavailable metadata through `createReviewMetadata`.
+  - Implemented first deterministic Anki mapping path in `AnkiReviewBackend`:
+    - normalised term keying by spelling + reading
+    - note discovery via configured readonly mappings
+    - note/card hydration through AnkiConnect `notesInfo` and `cardsInfo`
+    - strict eligibility filtering by configured decks/models and template policy
+    - deterministic selection policy: auto-select only when exactly one eligible candidate remains
+    - explicit ambiguous representation when multiple eligible candidates remain.
+  - Added AnkiConnect API typing/endpoints and wrappers for `notesInfo` and `cardsInfo`.
+  - Extended unified target metadata to carry Anki target identifiers (`ankiNoteId`, `ankiCardId`, deck/model/template metadata) for later review-write stages.
+- Files changed:
+  - `src/background-worker/review-backend/review-backend.types.ts`
+  - `src/background-worker/review-backend/jiten-review-backend.ts`
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+  - `src/background-worker/parser/parser.ts`
+  - `src/shared/jiten/create-review-metadata.ts`
+  - `src/shared/jiten/types.ts`
+  - `src/shared/anki/api.types.ts`
+  - `src/shared/anki/notes-info.ts`
+  - `src/shared/anki/cards-info.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Stage 7 mapping key policy: normalize and map by `(spelling, reading)` term identity, with duplicate term reuse inside a parse batch.
+  - Stage 7 eligibility policy: allow only cards whose deck/model is present in configured readonly/mining/blacklist/never-forget config sets.
+  - Stage 7 template policy (MVP strict): only template ordinal `0` is eligible for deterministic auto-selection.
+  - Stage 7 selection policy: select target only when exactly one eligible candidate exists; otherwise mark term as `ambiguous`.
+- Blockers / open issues:
+  - No compile/lint blocker.
+  - Live-behavior verification against real Anki datasets is still required to validate query strictness and template ordinal assumptions.
+  - Automated test harness for backend mapping policy is not yet present in this repository; current verification is lint/build only.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Execute targeted live Anki verification cases for:
+    - missing mapping (0 candidates)
+    - deterministic single candidate
+    - duplicate/ambiguous candidates.
+  - Add regression tests once a test harness for background mapping logic is available.
+- Handoff:
+  - Stage 7 core mapping/selection implementation is in place. Next run should start by validating real-world mapping correctness and deciding whether template eligibility remains fixed at ordinal `0` or becomes configurable.
+
+### 2026-04-07 - Stage 7 Start-of-Run
+- Stage:
+  - Stage 7 - Implement the Mapping Layer and Card Selection Policy.
+- Plan for this run:
+  - Define a strict mapping key policy from parsed Jiten terms to Anki candidate cards.
+  - Add eligibility filtering constrained to configured decks / note models / templates.
+  - Resolve candidate sets deterministically and derive selected target only when exactly one safe match exists.
+  - Populate unified `reviewMetadata` with explicit mapping/selection states that distinguish unmapped, due, not_due, and ambiguous outcomes.
+  - Add focused verification coverage for missing mapping, duplicates, and ambiguity cases.
+- Prerequisite observations:
+  - Stage 6 is complete and already routes parse-time state lookup through backend abstraction with safe fallback to Jiten.
+  - Current Anki read-only backend intentionally returns conservative empty review state and does not yet perform deterministic term-to-card mapping.
+  - Stage 5 `ReviewMetadata` contract is stable and must remain backward-compatible.
+- Risks/assumptions carried in:
+  - Risk: incorrect mapping key strategy may produce false-positive card matches; mitigation is strict, explicit key normalization and conservative ambiguity handling.
+  - Risk: eligibility filtering drift versus user configuration; mitigation is single filtering path driven by configured decks/models/templates.
+  - Assumption: Stage 7 remains read-only for Anki and does not enable review-write operations.
+
 ### 2026-04-06 - Stage 6 Implementation (Anki Read-Only Backend Shell)
 - Completed:
   - Added `AnkiReviewBackend` shell implementing `ReviewBackend` with:

@@ -1,8 +1,23 @@
-import { JitenCardState, JitenRating, JitenRawVocabulary } from '@shared/jiten/types';
+import {
+  JitenCardState,
+  JitenRating,
+  JitenRawVocabulary,
+  ReviewDueState,
+  ReviewMappingState,
+  ReviewTargetMetadata,
+  ReviewTargetState,
+} from '@shared/jiten/types';
 
 export type ReviewDeck = 'mining' | 'blacklist' | 'neverForget' | 'suspend';
 export type ReviewDeckAction = 'add' | 'remove';
-export type ReviewTermStateMap = Record<string, JitenCardState[]>;
+export type ReviewTermResolution = {
+  stateTags: JitenCardState[];
+  mappingState: ReviewMappingState;
+  dueState: ReviewDueState;
+  targetState: ReviewTargetState;
+  target?: ReviewTargetMetadata;
+};
+export type ReviewTermResolutionMap = Record<string, ReviewTermResolution>;
 
 export type ReviewBackendCapabilities = {
   supportsDeckActions: boolean;
@@ -11,7 +26,7 @@ export type ReviewBackendCapabilities = {
 
 export interface ReviewBackend {
   getCapabilities(): ReviewBackendCapabilities;
-  getParseReviewStates(vocabulary: JitenRawVocabulary[]): Promise<ReviewTermStateMap>;
+  getParseReviewStates(vocabulary: JitenRawVocabulary[]): Promise<ReviewTermResolutionMap>;
   gradeCard(wordId: number, readingIndex: number, rating: JitenRating): Promise<void>;
   getCardState(wordId: number, readingIndex: number): Promise<JitenCardState[]>;
   forgetCard(wordId: number, readingIndex: number): Promise<void>;

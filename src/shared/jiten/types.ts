@@ -57,6 +57,11 @@ export type ReviewTargetMetadata = {
   key: string;
   wordId: number;
   readingIndex: number;
+  ankiNoteId?: number;
+  ankiCardId?: number;
+  ankiDeck?: string;
+  ankiModel?: string;
+  ankiTemplateOrd?: number;
 };
 
 /**
