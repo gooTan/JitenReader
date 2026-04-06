@@ -1,10 +1,10 @@
 # Implementation Working Log
 
 ## Current Snapshot
-- Current stage: Stage 3 - Add backend selection infrastructure
-- Overall status: Stage 3 complete and verified.
-- Active backend behavior: Review operations and parse-time enrichment resolve backend choice through `ReviewBackendSelector`, with Jiten selected as effective backend.
-- Last updated: 2026-04-06 22:33:24 +10:00
+- Current stage: Stage 4 - Implement Anki availability probe and preference switching
+- Overall status: Stage 4 complete and verified.
+- Active backend behavior: Parse/enrichment now prefers Anki when enabled and reachable (cached probe), with safe fallback to Jiten when unavailable.
+- Last updated: 2026-04-06 23:09:00 +10:00
 
 ## Architectural Decisions
 ### Decision: Keep Stage 0 output documentation-only
@@ -72,8 +72,8 @@
 
 ## In Progress
 - Task: None.
-- Current status: Stage 3 closed.
-- Next immediate step: Begin Stage 4 preflight (`stage_4_implement_anki_availability_probe_and_preference_switching.md`) without expanding into mapping/write-path logic.
+- Current status: Stage 4 closed.
+- Next immediate step: Begin Stage 5 preflight and define unified review metadata model without adding Anki write-path behavior yet.
 
 ## Open Tasks
 - [x] Trace page parsing and enrichment ownership in content scripts and background worker.
@@ -116,13 +116,63 @@
 ## Handoff Notes
 - Stage 0 and Stage 1 are complete.
 - Stage 2 and Stage 3 are complete.
+- Stage 4 is complete.
 - The next model instance should start by reading this log, then:
   - `docs/stage_execution_protocol.md`
   - next target stage document in `docs/stages/`
   - `docs/stages/stage_0_architecture_note.md`
-- Resume at the next stage only; do not reopen Stage 3 unless regressions are found.
+- Resume at the next stage only; do not reopen Stage 4 unless regressions are found.
 
 ## Run History
+### 2026-04-06 - Stage 4 Implementation (Anki Availability Probe + Preference Switching)
+- Completed:
+  - Added concrete Anki reachability probe (`probeAnkiAvailability`) using AnkiConnect API version checks with graceful failure-to-unavailable behavior.
+  - Extended `ReviewBackendSelector` with short-lived availability cache (TTL), in-flight probe deduplication, and explicit cache invalidation API.
+  - Updated selector resolution so parse-cycle backend status prefers Anki when configured and available, otherwise falls back to Jiten.
+  - Wired probe and cache invalidation into service worker composition:
+    - probe injected at selector construction
+    - cache invalidated on `profileSwitched` and `configurationUpdated`.
+  - Extended parse-enriched card metadata to record selected backend via `JitenCard.reviewBackend`.
+- Files changed:
+  - `src/background-worker/review-backend/anki-availability-probe.ts`
+  - `src/background-worker/review-backend/review-backend-selector.ts`
+  - `src/background-worker/background-worker.ts`
+  - `src/background-worker/parser/parser.ts`
+  - `src/shared/jiten/types.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Availability probing is selector-owned and cached in the background layer to avoid repeated checks outside parse cycles.
+  - Selector backend preference remains configuration-driven (`enableAnkiIntegration`) with deterministic Jiten fallback.
+  - Parse enrichment is the source of truth for "which backend enriched this card" via explicit card metadata.
+- Blockers / open issues:
+  - No blocker for Stage 4 closure.
+  - Anki card-state mapping and review submission remain intentionally out of scope for this stage.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Start Stage 5 and introduce a backend-agnostic review metadata model consumed by popup/actions.
+- Handoff:
+  - Stage 4 is complete. Next run should begin with Stage 5 preflight and keep Stage 4 selector/probe behavior intact.
+
+### 2026-04-06 - Stage 4 Start-of-Run
+- Stage:
+  - Stage 4 - Implement Anki availability probe and preference switching.
+- Plan for this run:
+  - Implement a concrete Anki availability probe in backend-selection logic.
+  - Add short-lived caching/invalidation so availability checks are reused during parse windows.
+  - Update selector preference resolution to choose Anki when healthy and safely fall back to Jiten.
+  - Ensure parse/enrichment metadata records the active backend selected for the cycle.
+  - Verify with lint/build after implementation.
+- Prerequisite observations:
+  - Stage 3 is complete and already introduced `ReviewBackendSelector` plus backend status model and parse integration seam.
+  - Current effective behavior remains Jiten fallback/default until real Anki probe logic is added.
+  - Stage 4 non-goals exclude Anki card mapping, due-state lookup, and review submission.
+- Risks/assumptions carried in:
+  - Risk: over-probing Anki could impact parse responsiveness; mitigation is short-lived availability caching.
+  - Risk: leaking preference checks into popup/consumer paths; mitigation is parse-cycle selector ownership only.
+  - Assumption: existing Anki request plumbing can be reused to establish reachability without adding new review-path behavior.
+
 ### 2026-04-06 - Stage 3 Implementation (Backend Selection Infrastructure + Closure)
 - Completed:
   - Added backend selection status model in `review-backend-selector.types.ts` with explicit preferred/availability/active fields.

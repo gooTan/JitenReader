@@ -103,6 +103,7 @@ export class Parser {
           partsOfSpeech: meaningsPartOfSpeech[i],
         })),
         cardState,
+        reviewBackend: backendStatus.activeBackend,
         pitchAccents: pitchAccents ?? [],
         wordWithReading: null,
       };

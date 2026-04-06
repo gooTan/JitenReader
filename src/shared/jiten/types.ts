@@ -46,6 +46,8 @@ export type JitenRawVocabulary = {
   pitchAccents: number[] | null;
 };
 
+export type JitenReviewBackend = 'jiten' | 'anki';
+
 export type JitenCard = {
   wordId: number;
   readingIndex: number;
@@ -55,6 +57,7 @@ export type JitenCard = {
   partsOfSpeech: string[];
   meanings: JitenMeaning[];
   cardState: JitenCardState[];
+  reviewBackend: JitenReviewBackend;
   pitchAccents: number[];
   wordWithReading: string | null;
 };

@@ -25,6 +25,7 @@ import { LookupTextCommandHandler } from './lookup/lookup-text-command.handler';
 import { AbortRequestCommandHandler } from './parser/abort-request-command.handler';
 import { ParseCommandHandler } from './parser/parse-command.handler';
 import { ParseController } from './parser/parse.controller';
+import { probeAnkiAvailability } from './review-backend/anki-availability-probe';
 import { JitenReviewBackend } from './review-backend/jiten-review-backend';
 import { ReviewBackendSelector } from './review-backend/review-backend-selector';
 
@@ -46,9 +47,14 @@ const lookupController = new LookupController();
 const lookupTextCommandHandler = new LookupTextCommandHandler(lookupController);
 
 const jitenReviewBackend = new JitenReviewBackend();
-const reviewBackendSelector = new ReviewBackendSelector({
-  jiten: jitenReviewBackend,
-});
+const reviewBackendSelector = new ReviewBackendSelector(
+  {
+    jiten: jitenReviewBackend,
+  },
+  {
+    anki: probeAnkiAvailability,
+  },
+);
 
 const parseController = new ParseController(reviewBackendSelector);
 const parseCommandHandler = new ParseCommandHandler(parseController);
@@ -78,9 +84,11 @@ handlerCollection.listen();
 onBroadcastMessage('profileSwitched', () => {
   invalidateProfileCache();
   invalidateSetConfigurationCache();
+  reviewBackendSelector.invalidateAvailabilityCache();
 });
 
 onBroadcastMessage('configurationUpdated', async () => {
+  reviewBackendSelector.invalidateAvailabilityCache();
   const tabIds = getStyledTabIds();
 
   for (const tabId of tabIds) {
