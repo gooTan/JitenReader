@@ -2,6 +2,7 @@ import { MessageSender } from '@shared/extension/types';
 import { JitenToken } from '@shared/jiten/types';
 import { SequenceErrorCommand } from '@shared/messages/foreground/sequence-error.command';
 import { SequenceSuccessCommand } from '@shared/messages/foreground/sequence-success.command';
+import { ReviewBackendSelector } from '../review-backend/review-backend-selector';
 import { Parser } from './parser';
 import { Batch, Handle } from './parser.types';
 import { WorkerQueue } from './worker-queue';
@@ -12,6 +13,8 @@ export class ParseController {
 
   private _pendingParagraphs = new Map<number, Handle>();
   private _workerQueue = new WorkerQueue();
+
+  public constructor(private readonly _reviewBackendSelector: ReviewBackendSelector) {}
 
   public abortSequence(sequence: number): void {
     this._pendingParagraphs.delete(sequence);
@@ -78,7 +81,7 @@ export class ParseController {
   private queueBatches(batches: Batch[]): void {
     for (const batch of batches) {
       this._workerQueue.push(
-        () => new Parser(batch).parse(),
+        () => new Parser(batch, this._reviewBackendSelector).parse(),
         (e) => batch.handles.forEach((handle) => handle.reject(e)),
         this.JITEN_TIMEOUT,
       );

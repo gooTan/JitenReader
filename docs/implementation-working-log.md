@@ -1,10 +1,10 @@
 # Implementation Working Log
 
 ## Current Snapshot
-- Current stage: Stage 2 - Move review-status ownership to the parse / enrichment pipeline
-- Overall status: Stage 2 complete and verified.
-- Active backend behavior: Review operations are routed through an internal review backend abstraction with `JitenReviewBackend` as the active implementation.
-- Last updated: 2026-04-06 23:24:00 +10:00
+- Current stage: Stage 3 - Add backend selection infrastructure
+- Overall status: Stage 3 complete and verified.
+- Active backend behavior: Review operations and parse-time enrichment resolve backend choice through `ReviewBackendSelector`, with Jiten selected as effective backend.
+- Last updated: 2026-04-06 22:33:24 +10:00
 
 ## Architectural Decisions
 ### Decision: Keep Stage 0 output documentation-only
@@ -31,6 +31,11 @@
 - Summary: The initial interface covers only current review operations: grade, refresh card state, forget card, deck action, and capability reporting.
 - Rationale: Avoid premature generalization while meeting Stage 1 deliverables.
 - Consequences: Future stages can extend interface scope incrementally.
+
+### Decision: Centralize active-backend selection in a dedicated selector service
+- Summary: Introduced `ReviewBackendSelector` plus an explicit backend status model (`preferredBackend`, `availability`, `activeBackend`) and routed both parse enrichment and review handlers through it.
+- Rationale: Stage 3 requires a named selection point that is separate from backend implementations and reusable by multiple flows.
+- Consequences: Stage 4 can add Anki availability probing and preference switching by extending selector probes/status logic without refactoring parser or handlers.
 
 ## Completed Work
 ### 2026-04-06 - Stage 0 Preflight
@@ -67,8 +72,8 @@
 
 ## In Progress
 - Task: None.
-- Current status: Stage 2 closed.
-- Next immediate step: Begin Stage 3 preflight only after reading this log and the next stage document.
+- Current status: Stage 3 closed.
+- Next immediate step: Begin Stage 4 preflight (`stage_4_implement_anki_availability_probe_and_preference_switching.md`) without expanding into mapping/write-path logic.
 
 ## Open Tasks
 - [x] Trace page parsing and enrichment ownership in content scripts and background worker.
@@ -110,14 +115,71 @@
 
 ## Handoff Notes
 - Stage 0 and Stage 1 are complete.
-- Stage 2 is complete.
+- Stage 2 and Stage 3 are complete.
 - The next model instance should start by reading this log, then:
   - `docs/stage_execution_protocol.md`
   - next target stage document in `docs/stages/`
   - `docs/stages/stage_0_architecture_note.md`
-- Resume at the next stage only; do not reopen Stage 2 unless regressions are found.
+- Resume at the next stage only; do not reopen Stage 3 unless regressions are found.
 
 ## Run History
+### 2026-04-06 - Stage 3 Implementation (Backend Selection Infrastructure + Closure)
+- Completed:
+  - Added backend selection status model in `review-backend-selector.types.ts` with explicit preferred/availability/active fields.
+  - Added `ReviewBackendSelector` service to resolve preferred backend, backend availability (with probe scaffolding), active backend selection, and active backend implementation.
+  - Wired `ReviewBackendSelector` into parse-time enrichment path:
+    - `ParseController` now receives selector dependency.
+    - `Parser` now requests selector status per parse batch and enriches card review state based on active backend context.
+  - Routed background review action handlers through selector-resolved active backend:
+    - grade card
+    - refresh card state
+    - forget card
+    - deck action
+  - Updated service-worker composition (`background-worker.ts`) to instantiate one selector with Jiten backend registered as current implementation.
+- Files changed:
+  - `src/background-worker/review-backend/review-backend-selector.types.ts`
+  - `src/background-worker/review-backend/review-backend-selector.ts`
+  - `src/background-worker/background-worker.ts`
+  - `src/background-worker/parser/parse.controller.ts`
+  - `src/background-worker/parser/parser.ts`
+  - `src/background-worker/jiten-card-actions/grade-card-command.handler.ts`
+  - `src/background-worker/jiten-card-actions/update-card-state-command.handler.ts`
+  - `src/background-worker/jiten-card-actions/forget-card-command.handler.ts`
+  - `src/background-worker/jiten-card-actions/run-deck-action-command.handler.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Keep selector-level backend choice resolution independent from concrete backend classes.
+  - Preserve Jiten as deterministic fallback active backend when preferred backend is unavailable or unimplemented.
+  - Expose probe hooks in selector for later availability checks without enabling Anki behavior in Stage 3.
+- Blockers / open issues:
+  - No blocker for Stage 3 completion.
+  - Follow-up intentionally deferred to Stage 4: implement concrete Anki availability probe and preference-driven activation path.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Start Stage 4 and implement concrete availability probing plus preference switching using existing selector model and probe scaffold.
+- Handoff:
+  - Stage 3 is complete. Next run should perform Stage 4 preflight and continue from selector availability logic only.
+
+### 2026-04-06 - Stage 3 Start-of-Run
+- Stage:
+  - Stage 3 - Add backend selection infrastructure.
+- Plan for this run:
+  - Introduce an internal backend status model that represents active backend and optional backend availability/preference metadata.
+  - Add a dedicated backend selector module/service in the background worker layer, separate from concrete backend implementation details.
+  - Integrate parse/enrichment flow with the selector so parse-time logic can ask which backend is active.
+  - Keep Jiten as the effective backend for behavior parity and leave explicit scaffolding points for later Anki availability logic.
+  - Verify with lint/build after implementation changes.
+- Prerequisite observations:
+  - Stage 2 is complete and verified; parse/enrichment ownership of review state is already centralized as baseline.
+  - Existing review backend abstraction (`ReviewBackend` + `JitenReviewBackend`) provides a stable implementation seam for selector introduction.
+  - Stage 3 scope explicitly excludes Anki lookup/write/mapping logic and UI behavior changes.
+- Risks/assumptions carried in:
+  - Risk: coupling selector logic too tightly to parser internals; mitigation is a dedicated selector module with narrow interface.
+  - Risk: unintended behavior drift if active backend default is not explicit; mitigation is deterministic Jiten-first fallback.
+  - Assumption: parse/enrichment currently depends on Jiten-shaped review metadata and must remain stable in this stage.
+
 ### 2026-04-06 - Stage 2 Implementation (Popup Consumer Guard + Stage Closure)
 - Completed:
   - Audited popup/controller status ownership paths after centralization pass.

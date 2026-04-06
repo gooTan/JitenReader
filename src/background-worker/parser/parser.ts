@@ -7,17 +7,23 @@ import {
   JitenRuby,
   JitenToken,
 } from '@shared/jiten/types';
+import { ReviewBackendSelector } from '../review-backend/review-backend-selector';
+import { ReviewBackendStatus } from '../review-backend/review-backend-selector.types';
 import { Batch } from './parser.types';
 import { getPitchClass } from './pitch-accent-utils';
 
 export class Parser {
-  constructor(private batch: Batch) {}
+  constructor(
+    private readonly batch: Batch,
+    private readonly reviewBackendSelector: ReviewBackendSelector,
+  ) {}
 
   public async parse(): Promise<void> {
     const paragraphs = this.batch.strings;
     const { tokens, vocabulary } = await parse(paragraphs);
+    const backendStatus = await this.reviewBackendSelector.getStatus();
 
-    const cards = this.vocabToCard(vocabulary);
+    const cards = this.vocabToCard(vocabulary, backendStatus);
     const parsedTokens = this.parseTokens(tokens, cards, vocabulary);
 
     this.addSentenceInfo(paragraphs, parsedTokens);
@@ -65,7 +71,10 @@ export class Parser {
     return rubies;
   }
 
-  private vocabToCard(vocabulary: JitenRawVocabulary[]): JitenCard[] {
+  private vocabToCard(
+    vocabulary: JitenRawVocabulary[],
+    backendStatus: ReviewBackendStatus,
+  ): JitenCard[] {
     return vocabulary.map((vocab) => {
       const {
         wordId,
@@ -80,7 +89,7 @@ export class Parser {
         pitchAccents,
       } = vocab;
 
-      const cardState = this.enrichCardReviewState(knownState);
+      const cardState = this.enrichCardReviewState(knownState, backendStatus);
 
       return {
         wordId,
@@ -100,8 +109,22 @@ export class Parser {
     });
   }
 
-  private enrichCardReviewState(knownState: number[]): JitenCardState[] {
-    return mapReviewStates(knownState, JitenCardState.MATURE);
+  private enrichCardReviewState(
+    knownState: number[],
+    backendStatus: ReviewBackendStatus,
+  ): JitenCardState[] {
+    const fallbackState = this.getReviewStateFallback(backendStatus);
+
+    return mapReviewStates(knownState, fallbackState);
+  }
+
+  private getReviewStateFallback(backendStatus: ReviewBackendStatus): JitenCardState {
+    switch (backendStatus.activeBackend) {
+      case 'anki':
+      case 'jiten':
+      default:
+        return JitenCardState.MATURE;
+    }
   }
 
   private parseTokens(

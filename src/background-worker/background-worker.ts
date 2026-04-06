@@ -26,6 +26,7 @@ import { AbortRequestCommandHandler } from './parser/abort-request-command.handl
 import { ParseCommandHandler } from './parser/parse-command.handler';
 import { ParseController } from './parser/parse.controller';
 import { JitenReviewBackend } from './review-backend/jiten-review-backend';
+import { ReviewBackendSelector } from './review-backend/review-backend-selector';
 
 const isMobile =
   navigator.userAgent.toLowerCase().includes('android') ??
@@ -44,15 +45,19 @@ const parseSelectionCommand = new ParseSelectionCommand();
 const lookupController = new LookupController();
 const lookupTextCommandHandler = new LookupTextCommandHandler(lookupController);
 
-const parseController = new ParseController();
+const jitenReviewBackend = new JitenReviewBackend();
+const reviewBackendSelector = new ReviewBackendSelector({
+  jiten: jitenReviewBackend,
+});
+
+const parseController = new ParseController(reviewBackendSelector);
 const parseCommandHandler = new ParseCommandHandler(parseController);
 const abortRequestCommandHandler = new AbortRequestCommandHandler(parseController);
 
-const reviewBackend = new JitenReviewBackend();
-const updateCardStateCommandHandler = new UpdateCardStateCommandHandler(reviewBackend);
-const gradeCardCommandHandler = new GradeCardCommandHandler(reviewBackend);
-const runDeckActionCommandHandler = new RunDeckActionCommandHandler(reviewBackend);
-const forgetCardCommandHandler = new ForgetCardCommandHandler(reviewBackend);
+const updateCardStateCommandHandler = new UpdateCardStateCommandHandler(reviewBackendSelector);
+const gradeCardCommandHandler = new GradeCardCommandHandler(reviewBackendSelector);
+const runDeckActionCommandHandler = new RunDeckActionCommandHandler(reviewBackendSelector);
+const forgetCardCommandHandler = new ForgetCardCommandHandler(reviewBackendSelector);
 const openSettingsCommandHandler = new OpenSettingsCommandHandler();
 const updateBadgeCommandHandler = new UpdateBadgeCommandHandler();
 
