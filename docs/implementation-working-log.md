@@ -1,10 +1,10 @@
 # Implementation Working Log
 
 ## Current Snapshot
-- Current stage: Stage 0 - Codebase Reconnaissance and Architecture Map
-- Overall status: Stage 0 complete. Architecture reconnaissance and mapping documented.
-- Active backend behavior: Jiten-first parse enrichment and grading flow; no runtime Anki review backend selection yet.
-- Last updated: 2026-04-06 21:34:00 +10:00
+- Current stage: Stage 1 - Extract current Jiten review flow behind an internal abstraction
+- Overall status: Stage 1 complete and verified (lint + build passing).
+- Active backend behavior: Review operations are routed through an internal review backend abstraction with `JitenReviewBackend` as the active implementation.
+- Last updated: 2026-04-06 22:41:00 +10:00
 
 ## Architectural Decisions
 ### Decision: Keep Stage 0 output documentation-only
@@ -21,6 +21,16 @@
 - Summary: Created `docs/implementation-working-log.md` because it was absent at run start.
 - Rationale: Stage execution and persistent log protocols require a canonical on-disk log.
 - Consequences: Subsequent stages now have required persistence/handoff baseline.
+
+### Decision: Place Stage 1 review abstraction in background worker boundary
+- Summary: Added a `ReviewBackend` interface in `src/background-worker/review-backend/` and kept direct Jiten review requests inside `JitenReviewBackend`.
+- Rationale: Stage 1 requires a seam around current Jiten review flow without changing user-visible behaviour.
+- Consequences: Background handlers are now backend-agnostic and ready for a second backend.
+
+### Decision: Keep Stage 1 abstraction minimal and operation-focused
+- Summary: The initial interface covers only current review operations: grade, refresh card state, forget card, deck action, and capability reporting.
+- Rationale: Avoid premature generalization while meeting Stage 1 deliverables.
+- Consequences: Future stages can extend interface scope incrementally.
 
 ## Completed Work
 ### 2026-04-06 - Stage 0 Preflight
@@ -57,8 +67,8 @@
 
 ## In Progress
 - Task: None.
-- Current status: Stage 0 closed.
-- Next immediate step: Start Stage 1 using Stage 0 insertion points.
+- Current status: Stage 1 closed.
+- Next immediate step: Begin Stage 2 planning/execution only after required preflight.
 
 ## Open Tasks
 - [x] Trace page parsing and enrichment ownership in content scripts and background worker.
@@ -66,12 +76,14 @@
 - [x] Trace grading command chain to final Jiten request.
 - [x] Trace existing Anki configuration/request plumbing.
 - [x] Produce Stage 0 architecture note deliverable.
-- [ ] Begin Stage 1 (`stage_1_extract_jiten_review_backend_abstraction.md`) with adapter boundary at background card-action handlers.
+- [x] Begin Stage 1 (`stage_1_extract_jiten_review_backend_abstraction.md`) with adapter boundary at background card-action handlers.
+- [x] Add `ReviewBackend` and `JitenReviewBackend`.
+- [x] Route review handlers through abstraction (grade, refresh, forget, deck action).
+- [x] Verify lint/build in an environment with installed dependencies.
 
 ## Known Issues / Blockers
 - The path `docs/stages/stage-0-codebase-reconnaissance-and-architecture-map.md` is not present; canonical file is `docs/stages/stage_0_codebase_reconnaissance_and_architecture_map.md`.
-- `docs/implementation-working-log.md` was missing at run start (resolved during this run).
-- No technical blocker remains for closing Stage 0.
+- No active blocker for Stage 1 completion.
 
 ## Verification Status
 - Verified:
@@ -81,13 +93,94 @@
     - review-state computation owner
     - grade action command chain
     - future insertion points and risks
-- Not yet verified:
-  - No runtime verification required (documentation-only stage).
+  - Stage 1 review handlers now call abstraction methods instead of direct Jiten helpers.
+  - `JitenReviewBackend` preserves existing Jiten behavior for grade, refresh, forget, and deck actions.
+  - Dependencies installed (`npm install`) and lockfile refreshed.
+  - `npm run lint` passes.
+  - `npm run build` passes.
 
 ## Handoff Notes
-- Stage 0 is complete.
+- Stage 0 and Stage 1 are complete.
 - The next model instance should start by reading this log, then:
   - `docs/stage_execution_protocol.md`
-  - `docs/stages/stage_1_extract_jiten_review_backend_abstraction.md`
+  - `docs/stages/stage_2_move_review_status_to_parse_enrichment_pipeline.md` (or current target stage)
   - `docs/stages/stage_0_architecture_note.md`
-- Resume by implementing Stage 1 only, beginning at the documented backend abstraction seam in background card-action handlers.
+- Resume by starting the next stage only, without changing Stage 1 behavior.
+
+## Run History
+### 2026-04-06 - Stage 1 Start-of-Run
+- Stage:
+  - Stage 1 - Extract current Jiten review flow behind an internal abstraction.
+- Plan for this run:
+  - Identify all current review-state lookup, grade submission, and post-review refresh call sites.
+  - Introduce a minimal internal review backend interface in background-layer integration code.
+  - Implement `JitenReviewBackend` by moving existing Jiten-backed behaviour behind the interface.
+  - Refactor high-level handlers/controllers to use the abstraction and remove direct Jiten review calls at those levels.
+  - Verify behaviour parity via targeted code-path checks and available lint/tests.
+- Prerequisite observations:
+  - Stage 0 is complete and provides insertion points for background card-action handlers and review-state flow.
+  - No unresolved technical blocker from Stage 0 remains.
+- Risks/assumptions carried in:
+  - Risk: accidentally broadening abstraction scope beyond Stage 1; mitigation is strict boundary to existing review operations only.
+  - Assumption: current review behaviour must remain byte-for-byte equivalent from a user perspective, including popup-visible card-state updates.
+
+### 2026-04-06 - Stage 1 Implementation (Backend Abstraction Pass)
+- Completed:
+  - Added a new review backend interface and stage-local types.
+  - Implemented `JitenReviewBackend` to encapsulate current Jiten review operations.
+  - Refactored all background review handlers to depend on `ReviewBackend`:
+    - grade
+    - update card state
+    - forget card
+    - run deck action
+  - Injected one `JitenReviewBackend` instance from `background-worker.ts` into all review handlers.
+- Files changed:
+  - `src/background-worker/review-backend/review-backend.types.ts`
+  - `src/background-worker/review-backend/jiten-review-backend.ts`
+  - `src/background-worker/jiten-card-actions/grade-card-command.handler.ts`
+  - `src/background-worker/jiten-card-actions/update-card-state-command.handler.ts`
+  - `src/background-worker/jiten-card-actions/forget-card-command.handler.ts`
+  - `src/background-worker/jiten-card-actions/run-deck-action-command.handler.ts`
+  - `src/background-worker/background-worker.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Keep the abstraction boundary in background handlers for Stage 1.
+  - Keep interface surface minimal and mapped to existing responsibilities.
+- Blockers / open issues:
+  - Automated lint verification is blocked in this environment because `eslint` is not installed.
+- Verification status:
+  - Static parity review completed on modified command paths.
+  - `npm run lint` attempted and failed due to missing dependency tooling.
+- Next recommended step:
+  - Install dependencies and run `npm run lint`, then run a build to confirm Stage 1 closes cleanly.
+- Handoff:
+  - Resume at verification and acceptance check for Stage 1; no further scope expansion should occur until Stage 1 is confirmed.
+
+### 2026-04-06 - Stage 1 Verification and Closure
+- Completed:
+  - Installed project dependencies with network-enabled `npm install`.
+  - Ran `npm run lint:fix` to resolve formatting/import-order issues.
+  - Re-ran verification commands and confirmed:
+    - `npm run lint` passes.
+    - `npm run build` passes.
+- Files changed:
+  - `package-lock.json`
+  - `src/apps/parser/custom-parsers/ttsu.parser.ts`
+  - `src/background-worker/background-worker.ts`
+  - `src/background-worker/jiten-card-actions/forget-card-command.handler.ts`
+  - `src/background-worker/jiten-card-actions/grade-card-command.handler.ts`
+  - `src/background-worker/jiten-card-actions/run-deck-action-command.handler.ts`
+  - `src/background-worker/jiten-card-actions/update-card-state-command.handler.ts`
+  - `src/background-worker/review-backend/review-backend.types.ts`
+  - `src/background-worker/review-backend/jiten-review-backend.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - No additional architectural change; verification-only closure.
+- Blockers / open issues:
+  - None for Stage 1.
+- Verification status:
+  - Stage 1 acceptance checks satisfied in current environment.
+- Next recommended step:
+  - Start Stage 2 preflight and maintain Stage 1 abstraction seam as baseline.
+- Handoff:
+  - Stage 1 is closed. Next run should treat this stage as complete and avoid reopening unless regressions are found.

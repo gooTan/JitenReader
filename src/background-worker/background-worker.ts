@@ -25,6 +25,7 @@ import { LookupTextCommandHandler } from './lookup/lookup-text-command.handler';
 import { AbortRequestCommandHandler } from './parser/abort-request-command.handler';
 import { ParseCommandHandler } from './parser/parse-command.handler';
 import { ParseController } from './parser/parse.controller';
+import { JitenReviewBackend } from './review-backend/jiten-review-backend';
 
 const isMobile =
   navigator.userAgent.toLowerCase().includes('android') ??
@@ -47,10 +48,11 @@ const parseController = new ParseController();
 const parseCommandHandler = new ParseCommandHandler(parseController);
 const abortRequestCommandHandler = new AbortRequestCommandHandler(parseController);
 
-const updateCardStateCommandHandler = new UpdateCardStateCommandHandler();
-const gradeCardCommandHandler = new GradeCardCommandHandler();
-const runDeckActionCommandHandler = new RunDeckActionCommandHandler();
-const forgetCardCommandHandler = new ForgetCardCommandHandler();
+const reviewBackend = new JitenReviewBackend();
+const updateCardStateCommandHandler = new UpdateCardStateCommandHandler(reviewBackend);
+const gradeCardCommandHandler = new GradeCardCommandHandler(reviewBackend);
+const runDeckActionCommandHandler = new RunDeckActionCommandHandler(reviewBackend);
+const forgetCardCommandHandler = new ForgetCardCommandHandler(reviewBackend);
 const openSettingsCommandHandler = new OpenSettingsCommandHandler();
 const updateBadgeCommandHandler = new UpdateBadgeCommandHandler();
 

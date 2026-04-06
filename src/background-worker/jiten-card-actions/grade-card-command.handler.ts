@@ -1,18 +1,22 @@
 import { MessageSender } from '@shared/extension/types';
-import { review } from '@shared/jiten/review';
 import { JitenRating } from '@shared/jiten/types';
 import { GradeCardCommand } from '@shared/messages/background/grade-card.command';
 import { BackgroundCommandHandler } from '../lib/background-command-handler';
+import { ReviewBackend } from '../review-backend/review-backend.types';
 
 export class GradeCardCommandHandler extends BackgroundCommandHandler<GradeCardCommand> {
   public readonly command = GradeCardCommand;
 
+  public constructor(private readonly _reviewBackend: ReviewBackend) {
+    super();
+  }
+
   public async handle(
-    sender: MessageSender,
+    _sender: MessageSender,
     wordId: number,
     readingIndex: number,
     rating: JitenRating,
   ): Promise<void> {
-    await review(rating, wordId, readingIndex);
+    await this._reviewBackend.gradeCard(wordId, readingIndex, rating);
   }
 }
