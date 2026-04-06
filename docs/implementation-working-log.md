@@ -1,10 +1,10 @@
 # Implementation Working Log
 
 ## Current Snapshot
-- Current stage: Stage 5 - Design unified review metadata model
-- Overall status: Stage 5 complete and verified.
-- Active backend behavior: Parse/enrichment now prefers Anki when enabled and reachable (cached probe), with safe fallback to Jiten when unavailable.
-- Last updated: 2026-04-06 22:57:54 +10:00
+- Current stage: Stage 6 - Implement the Anki read-only backend shell
+- Overall status: Stage 6 complete and verified.
+- Active backend behavior: Parse/enrichment now routes through backend-owned parse state providers, including an Anki read-only backend shell with safe fallback to Jiten on read-path failure.
+- Last updated: 2026-04-06 23:41:50 +10:00
 
 ## Architectural Decisions
 ### Decision: Keep Stage 0 output documentation-only
@@ -72,8 +72,8 @@
 
 ## In Progress
 - Task: None.
-- Current status: Stage 5 closed.
-- Next immediate step: Begin Stage 6 preflight from stage docs and keep Stage 5 metadata contract stable.
+- Current status: Stage 6 closed.
+- Next immediate step: Begin Stage 7 preflight from stage docs and keep Stage 5 metadata contract stable.
 
 ## Open Tasks
 - [x] Trace page parsing and enrichment ownership in content scripts and background worker.
@@ -118,13 +118,85 @@
 - Stage 2 and Stage 3 are complete.
 - Stage 4 is complete.
 - Stage 5 is complete.
+- Stage 6 is complete.
 - The next model instance should start by reading this log, then:
   - `docs/stage_execution_protocol.md`
   - next target stage document in `docs/stages/`
-  - `docs/stages/stage_5_review_metadata_contract.md`
-- Resume at the next stage only; do not reopen Stage 5 unless regressions are found.
+  - `docs/stages/stage_6_implement_anki_read_only_backend_shell.md`
+- Resume at the next stage only; do not reopen Stage 6 unless regressions are found.
 
 ## Run History
+### 2026-04-06 - Stage 6 Implementation (Anki Read-Only Backend Shell)
+- Completed:
+  - Added `AnkiReviewBackend` shell implementing `ReviewBackend` with:
+    - read-only probe path (AnkiConnect `version` + `findNotes`) and short-lived probe cache
+    - conservative parse/refresh state output (`[]`) until deterministic mapping is implemented
+    - explicit unsupported-operation errors for write paths.
+  - Extended backend abstraction with parse-time state provider method (`getParseReviewStates`) and implemented it in `JitenReviewBackend`.
+  - Integrated Anki backend registration into service worker backend selector wiring.
+  - Updated parse pipeline to:
+    - resolve parse-time review states through active backend abstraction
+    - fallback safely to Jiten parse states and metadata backend when active backend parse read fails
+    - keep `ReviewMetadata` structure unchanged.
+  - Added action-handler safety for unsupported Anki writes:
+    - grade/forget/deck-action handlers now catch unsupported backend operations and fall back to Jiten.
+  - Updated card-state refresh flow to:
+    - fallback to Jiten on active-backend refresh failure
+    - set `actionsAvailable` from backend capabilities rather than assuming write support.
+  - Expanded Anki request wrapper and API typing for safe read-only operations:
+    - added `findNotes` endpoint support
+    - added optional toast suppression
+    - added non-OK response guard.
+- Files changed:
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+  - `src/background-worker/review-backend/review-backend.errors.ts`
+  - `src/background-worker/review-backend/review-backend.types.ts`
+  - `src/background-worker/review-backend/jiten-review-backend.ts`
+  - `src/background-worker/review-backend/review-backend-selector.ts`
+  - `src/background-worker/background-worker.ts`
+  - `src/background-worker/parser/parser.ts`
+  - `src/background-worker/jiten-card-actions/grade-card-command.handler.ts`
+  - `src/background-worker/jiten-card-actions/forget-card-command.handler.ts`
+  - `src/background-worker/jiten-card-actions/run-deck-action-command.handler.ts`
+  - `src/background-worker/jiten-card-actions/update-card-state-command.handler.ts`
+  - `src/shared/anki/api.types.ts`
+  - `src/shared/anki/request.ts`
+  - `src/shared/anki/find-notes.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Keep Stage 6 Anki integration strictly read-only by design; unsupported write operations are explicit and recoverable.
+  - Move parse-time review-state sourcing behind backend abstraction (`getParseReviewStates`) to validate multi-backend participation without introducing mapping complexity.
+  - Preserve Stage 5 metadata contract; use conservative empty Anki state payloads to represent unmapped/unknown state safely.
+  - Prefer runtime fallback to Jiten for operation continuity when Anki read/write paths are not usable.
+- Blockers / open issues:
+  - No active blocker for Stage 6 closure.
+  - Deterministic Jiten-term -> Anki-card mapping remains intentionally deferred to next stage.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Start Stage 7 and implement deterministic mapping/target selection from parsed terms to eligible Anki cards.
+- Handoff:
+  - Stage 6 is complete. Next run should begin Stage 7 preflight and treat Stage 6 backend shell + fallback behavior as baseline.
+
+### 2026-04-06 - Stage 6 Start-of-Run
+- Stage:
+  - Stage 6 - Implement the Anki read-only backend shell.
+- Plan for this run:
+  - Add an `AnkiReviewBackend` shell that satisfies the existing backend abstraction while keeping write operations safely unsupported.
+  - Extend internal Anki request plumbing only as needed for read-only backend participation in parse/enrichment.
+  - Integrate constrained Anki enrichment path so unified `reviewMetadata` can be populated from Anki-originated context without changing the Stage 5 contract.
+  - Ensure robust fallback/error handling so Anki read failures do not break parse flow or popup rendering.
+  - Verify with `npm run lint` and `npm run build`.
+- Prerequisite observations:
+  - Stage 5 is complete and `ReviewMetadata` is now the stable internal contract across parse/refresh/popup flows.
+  - Stage 4 already provides selector-based backend preference with cached Anki availability probing and deterministic fallback behavior.
+  - Current review action handlers are selector-routed and backend-agnostic, enabling insertion of an Anki backend implementation.
+- Risks/assumptions carried in:
+  - Risk: introducing an Anki backend object with unsupported write paths may accidentally alter review action behavior; mitigation is explicit safe guards and unchanged fallback semantics.
+  - Risk: partial Anki state hydration could produce inconsistent UI state; mitigation is to emit structurally valid `ReviewMetadata` with conservative defaults.
+  - Assumption: this stage remains read-only for Anki integration and defers deterministic term-to-card mapping complexity to the next stage.
+
 ### 2026-04-06 - Post-Stage 5 Regression Fix (TextHighlighter Split Guard)
 - Completed:
   - Investigated browser-reported runtime error:

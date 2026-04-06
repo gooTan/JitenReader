@@ -61,6 +61,10 @@ export class ReviewBackendSelector {
     return this._backends[activeBackend] ?? this._backends.jiten;
   }
 
+  public getBackend(id: ReviewBackendId): ReviewBackend | undefined {
+    return this._backends[id];
+  }
+
   private async getPreferredBackend(): Promise<ReviewBackendId> {
     const enableAnkiIntegration = await getConfiguration('enableAnkiIntegration');
 

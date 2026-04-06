@@ -1,16 +1,18 @@
 import { getConfiguration } from '@shared/configuration/get-configuration';
 import { addVocabulary } from '@shared/jiten/add-vocabulary';
 import { getCardState } from '@shared/jiten/get-card-state';
+import { mapReviewStates } from '@shared/jiten/map-review-states';
 import { removeVocabulary } from '@shared/jiten/remove-vocabulary';
 import { request } from '@shared/jiten/request';
 import { review } from '@shared/jiten/review';
 import { setCardSentence } from '@shared/jiten/set-card-sentence';
-import { JitenRating } from '@shared/jiten/types';
+import { JitenCardState, JitenRawVocabulary, JitenRating } from '@shared/jiten/types';
 import {
   ReviewBackend,
   ReviewBackendCapabilities,
   ReviewDeck,
   ReviewDeckAction,
+  ReviewTermStateMap,
 } from './review-backend.types';
 
 const JITEN_REVIEW_BACKEND_CAPABILITIES: ReviewBackendCapabilities = {
@@ -21,6 +23,16 @@ const JITEN_REVIEW_BACKEND_CAPABILITIES: ReviewBackendCapabilities = {
 export class JitenReviewBackend implements ReviewBackend {
   public getCapabilities(): ReviewBackendCapabilities {
     return JITEN_REVIEW_BACKEND_CAPABILITIES;
+  }
+
+  public getParseReviewStates(vocabulary: JitenRawVocabulary[]): Promise<ReviewTermStateMap> {
+    const states: ReviewTermStateMap = {};
+
+    for (const { wordId, readingIndex, knownState } of vocabulary) {
+      states[`${wordId}/${readingIndex}`] = mapReviewStates(knownState, JitenCardState.MATURE);
+    }
+
+    return Promise.resolve(states);
   }
 
   public getCardState(wordId: number, readingIndex: number): ReturnType<typeof getCardState> {

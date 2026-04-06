@@ -10,6 +10,7 @@ import {
 } from '@shared/jiten/types';
 import { ReviewBackendSelector } from '../review-backend/review-backend-selector';
 import { ReviewBackendStatus } from '../review-backend/review-backend-selector.types';
+import { ReviewBackend, ReviewTermStateMap } from '../review-backend/review-backend.types';
 import { Batch } from './parser.types';
 import { getPitchClass } from './pitch-accent-utils';
 
@@ -23,8 +24,15 @@ export class Parser {
     const paragraphs = this.batch.strings;
     const { tokens, vocabulary } = await parse(paragraphs);
     const backendStatus = await this.reviewBackendSelector.getStatus();
-
-    const cards = this.vocabToCard(vocabulary, backendStatus);
+    const activeBackend = await this.reviewBackendSelector.getActiveBackend();
+    const { effectiveBackendStatus, parseReviewStates, effectiveBackend } =
+      await this.getParseReviewStates(vocabulary, backendStatus, activeBackend);
+    const cards = this.vocabToCard(
+      vocabulary,
+      effectiveBackendStatus,
+      parseReviewStates,
+      effectiveBackend,
+    );
     const parsedTokens = this.parseTokens(tokens, cards, vocabulary);
 
     this.addSentenceInfo(paragraphs, parsedTokens);
@@ -75,6 +83,8 @@ export class Parser {
   private vocabToCard(
     vocabulary: JitenRawVocabulary[],
     backendStatus: ReviewBackendStatus,
+    parseReviewStates: ReviewTermStateMap,
+    activeBackend: ReviewBackend,
   ): JitenCard[] {
     return vocabulary.map((vocab) => {
       const {
@@ -90,14 +100,19 @@ export class Parser {
         pitchAccents,
       } = vocab;
 
-      const cardState = this.enrichCardReviewState(knownState, backendStatus);
+      const cardState = this.enrichCardReviewState(
+        vocab,
+        knownState,
+        backendStatus,
+        parseReviewStates,
+      );
       const reviewMetadata = createReviewMetadata({
         backend: backendStatus.activeBackend,
         wordId,
         readingIndex,
         stateTags: cardState,
         freshness: 'stale',
-        actionsAvailable: backendStatus.activeBackend === 'jiten',
+        actionsAvailable: activeBackend.getCapabilities().supportsDeckActions,
       });
 
       return {
@@ -121,9 +136,17 @@ export class Parser {
   }
 
   private enrichCardReviewState(
+    vocabulary: JitenRawVocabulary,
     knownState: number[],
     backendStatus: ReviewBackendStatus,
+    parseReviewStates: ReviewTermStateMap,
   ): JitenCardState[] {
+    const key = `${vocabulary.wordId}/${vocabulary.readingIndex}`;
+
+    if (parseReviewStates[key]) {
+      return parseReviewStates[key];
+    }
+
     const fallbackState = this.getReviewStateFallback(backendStatus);
 
     return mapReviewStates(knownState, fallbackState);
@@ -132,9 +155,48 @@ export class Parser {
   private getReviewStateFallback(backendStatus: ReviewBackendStatus): JitenCardState {
     switch (backendStatus.activeBackend) {
       case 'anki':
+        return JitenCardState.NEW;
       case 'jiten':
       default:
         return JitenCardState.MATURE;
+    }
+  }
+
+  private async getParseReviewStates(
+    vocabulary: JitenRawVocabulary[],
+    backendStatus: ReviewBackendStatus,
+    activeBackend: ReviewBackend,
+  ): Promise<{
+    effectiveBackendStatus: ReviewBackendStatus;
+    parseReviewStates: ReviewTermStateMap;
+    effectiveBackend: ReviewBackend;
+  }> {
+    try {
+      const parseReviewStates = await activeBackend.getParseReviewStates(vocabulary);
+
+      return {
+        effectiveBackendStatus: backendStatus,
+        parseReviewStates,
+        effectiveBackend: activeBackend,
+      };
+    } catch {
+      const jitenBackend = this.reviewBackendSelector.getBackend('jiten');
+      const jitenParseStates = jitenBackend
+        ? await jitenBackend.getParseReviewStates(vocabulary)
+        : {};
+
+      return {
+        effectiveBackendStatus: {
+          ...backendStatus,
+          activeBackend: 'jiten',
+          availability: {
+            ...backendStatus.availability,
+            anki: 'unavailable',
+          },
+        },
+        parseReviewStates: jitenParseStates,
+        effectiveBackend: jitenBackend ?? activeBackend,
+      };
     }
   }
 

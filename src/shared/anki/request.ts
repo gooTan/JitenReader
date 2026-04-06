@@ -7,10 +7,13 @@ export const request = async <Key extends keyof AnkiEndpoints>(
   params: AnkiEndpoints[Key][0] | undefined,
   options?: AnkiRequestOptions,
 ): Promise<AnkiEndpoints[Key][1]> => {
+  const showToastOnError = options?.showToastOnError ?? true;
   const ankiUrl = options?.ankiConnectUrl || (await getConfiguration('ankiUrl'));
 
   if (!ankiUrl?.length) {
-    displayToast('error', 'Anki URL is not set');
+    if (showToastOnError) {
+      displayToast('error', 'Anki URL is not set');
+    }
 
     throw new Error('Anki URL is not set');
   }
@@ -27,6 +30,10 @@ export const request = async <Key extends keyof AnkiEndpoints>(
       params,
     }),
   });
+
+  if (!response.ok) {
+    throw new Error(`Anki request failed with status ${response.status}`);
+  }
 
   const responseObject = (await response.json()) as
     | {
