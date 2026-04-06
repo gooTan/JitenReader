@@ -55,7 +55,7 @@ export class MiningActions {
     }
 
     const state = MiningActions.STATE_MAP[key];
-    const action = state && this._card.cardState.includes(state) ? 'remove' : 'add';
+    const action = state && this.getStateTags(this._card).includes(state) ? 'remove' : 'add';
 
     this._controller.addOrRemove(action, key, this._card, this._sentence);
   }
@@ -69,13 +69,22 @@ export class MiningActions {
     const { wordId, readingIndex } = card;
 
     if (this._pendingCard?.wordId !== wordId || this._pendingCard?.readingIndex !== readingIndex) {
-      this._originalCardState = [...card.cardState];
+      this._originalCardState = [...this.getStateTags(card)];
       this._pendingCard = card;
     }
 
-    const nextState = this.getNextCycleState(card.cardState);
+    const nextState = this.getNextCycleState(this.getStateTags(card));
+    const nextReviewMetadata = {
+      ...card.reviewMetadata,
+      freshness: 'stale' as const,
+      dueState: nextState.includes(JitenCardState.DUE) ? 'due' : 'notDue',
+      mappingState: nextState.length > 0 ? 'mapped' : 'unmapped',
+      targetState: nextState.length > 0 ? 'selected' : 'none',
+      target: nextState.length > 0 ? card.reviewMetadata.target : undefined,
+      stateTags: nextState,
+    };
 
-    Registry.updateCard(wordId, readingIndex, nextState);
+    Registry.updateCard(wordId, readingIndex, nextReviewMetadata);
 
     if (this._cycleTimer) {
       clearTimeout(this._cycleTimer);
@@ -113,8 +122,9 @@ export class MiningActions {
 
     const hadMastered = original.includes(JitenCardState.MASTERED);
     const hadBlacklisted = original.includes(JitenCardState.BLACKLISTED);
-    const hasMastered = card.cardState.includes(JitenCardState.MASTERED);
-    const hasBlacklisted = card.cardState.includes(JitenCardState.BLACKLISTED);
+    const updatedStates = this.getStateTags(card);
+    const hasMastered = updatedStates.includes(JitenCardState.MASTERED);
+    const hasBlacklisted = updatedStates.includes(JitenCardState.BLACKLISTED);
 
     const instructions: RunDeckActionCommand[] = [];
 
@@ -155,5 +165,9 @@ export class MiningActions {
     };
 
     executeInstructions(0);
+  }
+
+  private getStateTags(card: JitenCard): JitenCardState[] {
+    return card.reviewMetadata?.stateTags ?? card.cardState;
   }
 }

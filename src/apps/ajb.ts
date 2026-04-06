@@ -3,7 +3,7 @@ import { invalidateSetConfigurationCache } from '@shared/configuration/set-confi
 import { debug } from '@shared/debug';
 import { displayToast } from '@shared/dom/display-toast';
 import { HostMeta, PredefinedHostMeta } from '@shared/host-meta/types';
-import { JitenCardState } from '@shared/jiten/types';
+import { ReviewMetadata } from '@shared/jiten/types';
 import { LookupTextCommand } from '@shared/messages/background/lookup-text.command';
 import { onBroadcastMessage } from '@shared/messages/receiving/on-broadcast-message';
 import { receiveBackgroundMessage } from '@shared/messages/receiving/receive-background-message';
@@ -57,8 +57,8 @@ export class AJB {
 
     onBroadcastMessage(
       'cardStateUpdated',
-      (wordId: number, readingIndex: number, state: JitenCardState[]) => {
-        Registry.updateCard(wordId, readingIndex, state);
+      (wordId: number, readingIndex: number, reviewMetadata: ReviewMetadata) => {
+        Registry.updateCard(wordId, readingIndex, reviewMetadata);
         Registry.statusBar?.recalculateStats();
       },
     );

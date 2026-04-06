@@ -1,4 +1,4 @@
-import { JitenCardState } from '../../jiten/types';
+import { ReviewMetadata } from '../../jiten/types';
 import { PotentialPromise } from '../../types';
 
 /**
@@ -6,7 +6,7 @@ import { PotentialPromise } from '../../types';
  */
 export interface BroadcastEvents {
   configurationUpdated: [];
-  cardStateUpdated: [wordId: number, readingIndex: number, cardstate: JitenCardState[]];
+  cardStateUpdated: [wordId: number, readingIndex: number, reviewMetadata: ReviewMetadata];
   parsingPaused: [paused: boolean];
 }
 export type BroadcastEventArgs<T extends keyof BroadcastEvents> = BroadcastEvents[T];

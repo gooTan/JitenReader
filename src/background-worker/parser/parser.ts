@@ -1,3 +1,4 @@
+import { createReviewMetadata } from '@shared/jiten/create-review-metadata';
 import { mapReviewStates } from '@shared/jiten/map-review-states';
 import { parse } from '@shared/jiten/parse';
 import {
@@ -90,6 +91,14 @@ export class Parser {
       } = vocab;
 
       const cardState = this.enrichCardReviewState(knownState, backendStatus);
+      const reviewMetadata = createReviewMetadata({
+        backend: backendStatus.activeBackend,
+        wordId,
+        readingIndex,
+        stateTags: cardState,
+        freshness: 'stale',
+        actionsAvailable: backendStatus.activeBackend === 'jiten',
+      });
 
       return {
         wordId,
@@ -104,6 +113,7 @@ export class Parser {
         })),
         cardState,
         reviewBackend: backendStatus.activeBackend,
+        reviewMetadata,
         pitchAccents: pitchAccents ?? [],
         wordWithReading: null,
       };

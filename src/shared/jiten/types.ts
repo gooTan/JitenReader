@@ -48,6 +48,36 @@ export type JitenRawVocabulary = {
 
 export type JitenReviewBackend = 'jiten' | 'anki';
 
+export type ReviewMappingState = 'mapped' | 'unmapped' | 'ambiguous';
+export type ReviewDueState = 'due' | 'notDue' | 'unavailable' | 'unknown';
+export type ReviewTargetState = 'selected' | 'none' | 'ambiguous';
+export type ReviewFreshnessState = 'fresh' | 'stale' | 'unknown';
+
+export type ReviewTargetMetadata = {
+  key: string;
+  wordId: number;
+  readingIndex: number;
+};
+
+/**
+ * Unified term-level review metadata contract.
+ *
+ * Ownership:
+ * - parse/enrichment pipeline writes initial metadata (`freshness: 'stale'`)
+ * - post-review refresh flow writes refreshed metadata (`freshness: 'fresh'`)
+ * - popup and foreground consumers are read-only and render directly from this object
+ */
+export type ReviewMetadata = {
+  backend: JitenReviewBackend;
+  mappingState: ReviewMappingState;
+  dueState: ReviewDueState;
+  targetState: ReviewTargetState;
+  target?: ReviewTargetMetadata;
+  freshness: ReviewFreshnessState;
+  actionsAvailable: boolean;
+  stateTags: JitenCardState[];
+};
+
 export type JitenCard = {
   wordId: number;
   readingIndex: number;
@@ -58,6 +88,7 @@ export type JitenCard = {
   meanings: JitenMeaning[];
   cardState: JitenCardState[];
   reviewBackend: JitenReviewBackend;
+  reviewMetadata: ReviewMetadata;
   pitchAccents: number[];
   wordWithReading: string | null;
 };

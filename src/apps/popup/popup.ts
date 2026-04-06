@@ -591,7 +591,11 @@ export class Popup {
       suspend: JitenCardState.BLACKLISTED,
     };
 
-    return card.cardState.includes(stateMap[state]);
+    return this.getReviewStateTags(card).includes(stateMap[state]);
+  }
+
+  private getReviewStateTags(card: JitenCard): JitenCardState[] {
+    return card.reviewMetadata?.stateTags ?? card.cardState;
   }
 
   //#endregion
@@ -607,7 +611,7 @@ export class Popup {
     this.adjustContext(this._card);
     this.adjustDetails(this._card);
 
-    this._popup.setAttribute('class', `popup ${this._card.cardState.join(' ')}`);
+    this._popup.setAttribute('class', `popup ${this.getReviewStateTags(this._card).join(' ')}`);
   }
 
   private adjustMiningButtons(card: JitenCard): void {
@@ -754,7 +758,7 @@ export class Popup {
   }
 
   private getCardStateBlock(card: JitenCard): HTMLDivElement {
-    const { cardState } = card;
+    const cardState = this.getReviewStateTags(card);
 
     return createElement('div', {
       id: 'state',

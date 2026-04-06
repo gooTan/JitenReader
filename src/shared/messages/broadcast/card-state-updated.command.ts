@@ -1,8 +1,8 @@
-import { JitenCardState } from '../../jiten/types';
+import { ReviewMetadata } from '../../jiten/types';
 import { BroadcastCommand } from '../lib/broadcast-command';
 
 export class CardStateUpdatedCommand extends BroadcastCommand<
-  [wordId: number, readingIndex: number, cardstate: JitenCardState[]]
+  [wordId: number, readingIndex: number, reviewMetadata: ReviewMetadata]
 > {
   public readonly key = 'cardStateUpdated';
 }

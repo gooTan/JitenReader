@@ -1,10 +1,10 @@
 # Implementation Working Log
 
 ## Current Snapshot
-- Current stage: Stage 4 - Implement Anki availability probe and preference switching
-- Overall status: Stage 4 complete and verified.
+- Current stage: Stage 5 - Design unified review metadata model
+- Overall status: Stage 5 complete and verified.
 - Active backend behavior: Parse/enrichment now prefers Anki when enabled and reachable (cached probe), with safe fallback to Jiten when unavailable.
-- Last updated: 2026-04-06 23:09:00 +10:00
+- Last updated: 2026-04-06 22:57:54 +10:00
 
 ## Architectural Decisions
 ### Decision: Keep Stage 0 output documentation-only
@@ -72,8 +72,8 @@
 
 ## In Progress
 - Task: None.
-- Current status: Stage 4 closed.
-- Next immediate step: Begin Stage 5 preflight and define unified review metadata model without adding Anki write-path behavior yet.
+- Current status: Stage 5 closed.
+- Next immediate step: Begin Stage 6 preflight from stage docs and keep Stage 5 metadata contract stable.
 
 ## Open Tasks
 - [x] Trace page parsing and enrichment ownership in content scripts and background worker.
@@ -117,13 +117,99 @@
 - Stage 0 and Stage 1 are complete.
 - Stage 2 and Stage 3 are complete.
 - Stage 4 is complete.
+- Stage 5 is complete.
 - The next model instance should start by reading this log, then:
   - `docs/stage_execution_protocol.md`
   - next target stage document in `docs/stages/`
-  - `docs/stages/stage_0_architecture_note.md`
-- Resume at the next stage only; do not reopen Stage 4 unless regressions are found.
+  - `docs/stages/stage_5_review_metadata_contract.md`
+- Resume at the next stage only; do not reopen Stage 5 unless regressions are found.
 
 ## Run History
+### 2026-04-06 - Post-Stage 5 Regression Fix (TextHighlighter Split Guard)
+- Completed:
+  - Investigated browser-reported runtime error:
+    - `IndexSizeError: Failed to execute 'splitText' on 'Text'` in `TextHighlighter.splitFragmentsNode`.
+  - Added defensive split-boundary guards to avoid invalid split offsets after fragment mutation/rebuild drift.
+  - Applied guards in:
+    - `cutoffTokenEnd`
+    - `adjustFragmentEnds`
+    - `adjustFragmentStarts`
+    - `splitMultiTokenFragmentsChunked`
+  - Added helper `canSplitFragmentAt` and fallback `fixFragmentParameters` path when a split is not safe.
+- Files changed:
+  - `src/apps/text-highlighter/text-highlighter.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Prefer graceful no-op on invalid fragment split boundaries over throwing and aborting parse/highlight pipeline.
+  - Keep correction local to TextHighlighter split operations without changing Stage 5 review-metadata contract.
+- Blockers / open issues:
+  - No active blocker.
+  - Requires browser re-check on the previously failing page to confirm runtime stack trace is resolved.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Re-test the exact page/action sequence that triggered `splitText` offset error and confirm no console exception.
+- Handoff:
+  - Stage 5 remains complete; this run adds a targeted post-stage runtime hardening fix in highlighter splitting.
+
+### 2026-04-06 - Stage 5 Implementation (Unified Review Metadata Model)
+- Completed:
+  - Added a backend-neutral `ReviewMetadata` contract to `JitenCard` with explicit backend, mapping, due, target, freshness, action-availability, and normalized state tags.
+  - Added shared adapter `createReviewMetadata` and applied it in:
+    - parse/enrichment path (`freshness: 'stale'`)
+    - post-review refresh broadcast path (`freshness: 'fresh'`).
+  - Updated broadcast payload shape for `cardStateUpdated` from raw `JitenCardState[]` to `ReviewMetadata`.
+  - Updated foreground registry update path to store both `reviewMetadata` and legacy `cardState` tags for existing class-based consumers.
+  - Updated popup rendering/state checks to consume `reviewMetadata.stateTags` as primary source.
+  - Updated optimistic mining-cycle foreground updates to preserve/advance review metadata state.
+  - Added Stage 5 contract note documenting field meanings and ownership.
+- Files changed:
+  - `src/shared/jiten/types.ts`
+  - `src/shared/jiten/create-review-metadata.ts`
+  - `src/background-worker/parser/parser.ts`
+  - `src/background-worker/jiten-card-actions/update-card-state-command.handler.ts`
+  - `src/shared/messages/broadcast/card-state-updated.command.ts`
+  - `src/shared/messages/types/broadcast.ts`
+  - `src/apps/integration/registry.ts`
+  - `src/apps/ajb.ts`
+  - `src/apps/popup/popup.ts`
+  - `src/apps/popup/actions/mining-actions.ts`
+  - `docs/stages/stage_5_review_metadata_contract.md`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Keep `cardState` on `JitenCard` as compatibility tags while introducing `reviewMetadata` as the canonical cross-backend contract.
+  - Make parse and refresh paths explicit metadata owners via `freshness` transitions (`stale` -> `fresh`).
+  - Keep popup consumers backend-neutral by reading only normalized metadata tags for rendering.
+- Blockers / open issues:
+  - No blocker for Stage 5 closure.
+  - Some non-popup consumers (e.g. status/highlighter internals) still read compatibility `cardState`, intentionally deferred beyond Stage 5 scope.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Start Stage 6 and populate this same metadata model from a minimal Anki read path without changing popup contract again.
+- Handoff:
+  - Stage 5 complete. Next run should treat `ReviewMetadata` as the stable internal contract and avoid redesigning popup state shape.
+
+### 2026-04-06 - Stage 5 Start-of-Run
+- Stage:
+  - Stage 5 - Design unified review metadata model.
+- Plan for this run:
+  - Define a backend-neutral term-level review metadata type that encodes backend source, mapping state, due state, target metadata, freshness, and action availability.
+  - Adapt current Jiten-enriched parse output to populate this model without changing user-visible review behavior.
+  - Update popup consumers to render from unified metadata rather than backend-specific assumptions.
+  - Add concise in-repo documentation for field ownership and meaning.
+  - Verify with `npm run lint` and `npm run build`.
+- Prerequisite observations:
+  - Stage 4 is complete with selector-owned backend preference and Anki availability probing/caching.
+  - Parse-enriched cards already include backend identity (`reviewBackend`) and current `cardState` metadata from Jiten paths.
+  - Stage 5 non-goals explicitly exclude Anki due lookup and write-path implementation.
+- Risks/assumptions carried in:
+  - Risk: model churn can break popup assumptions if migration is partial; mitigation is single-contract shared type plus end-to-end wiring in one pass.
+  - Risk: overfitting model to Jiten semantics; mitigation is explicit mapping/due/freshness enums that remain backend-neutral.
+  - Assumption: existing Stage 4 selector status and parse ownership remain unchanged and should only feed the new model.
+
 ### 2026-04-06 - Stage 4 Implementation (Anki Availability Probe + Preference Switching)
 - Completed:
   - Added concrete Anki reachability probe (`probeAnkiAvailability`) using AnkiConnect API version checks with graceful failure-to-unavailable behavior.

@@ -1,4 +1,4 @@
-import { JitenCard, JitenCardState } from '@shared/jiten/types';
+import { JitenCard, JitenCardState, ReviewMetadata } from '@shared/jiten/types';
 import { BatchController } from '../batches/batch-controller';
 import { BaseParser } from '../parser/base.parser';
 import { PopupManager } from '../popup/popup-manager';
@@ -53,7 +53,12 @@ export class Registry {
     }
   }
 
-  public static updateCard(wordId: number, readingIndex: number, state: JitenCardState[]): void {
+  public static updateCard(
+    wordId: number,
+    readingIndex: number,
+    reviewMetadata: ReviewMetadata,
+  ): void {
+    const state = reviewMetadata.stateTags;
     const card = this.getCard(wordId, readingIndex);
     const managedStates = Object.values(JitenCardState);
 
@@ -62,6 +67,7 @@ export class Registry {
     }
 
     card.cardState = state;
+    card.reviewMetadata = reviewMetadata;
 
     document
       .querySelectorAll(`[wordId="${wordId}"][readingIndex="${readingIndex}"]`)

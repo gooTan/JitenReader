@@ -146,6 +146,12 @@ export class TextHighlighter extends BaseTextHighlighter {
     // If the fragment is longer than the token (e.g. a sentence ending with a period)
     // we cut off the end and mark it as unparsed
     if (token.end < fragment.end) {
+      if (!this.canSplitFragmentAt(fragment, token.end)) {
+        this.fixFragmentParameters(fragment);
+
+        return;
+      }
+
       // The fragment is longer than the token (e.g. a sentence ending with a period)
       this.patchOrWrap(this.splitFragmentsNode(fragment, token.end));
 
@@ -175,6 +181,12 @@ export class TextHighlighter extends BaseTextHighlighter {
       .filter((fragment) => this.isFragmentWithinToken(fragment, token))
       .forEach((fragment) => {
         if (fragment.end > token.end) {
+          if (!this.canSplitFragmentAt(fragment, token.end)) {
+            this.fixFragmentParameters(fragment);
+
+            return;
+          }
+
           const overlap = this.splitFragmentsNode(fragment, token.end);
 
           this.fixFragmentParameters(fragment);
@@ -188,6 +200,12 @@ export class TextHighlighter extends BaseTextHighlighter {
       .filter((fragment) => this.isFragmentWithinToken(fragment, token))
       .forEach((fragment) => {
         if (fragment.start < token.start) {
+          if (!this.canSplitFragmentAt(fragment, token.start)) {
+            this.fixFragmentParameters(fragment);
+
+            return;
+          }
+
           const correctedFragmentTextNode = this.splitFragmentsNode(fragment, token.start);
 
           fragment.node = correctedFragmentTextNode;
@@ -493,6 +511,14 @@ export class TextHighlighter extends BaseTextHighlighter {
   protected fixFragmentParameters(fragment: Fragment): void {
     fragment.length = fragment.node.data.length;
     fragment.end = fragment.start + fragment.length;
+  }
+
+  protected canSplitFragmentAt(fragment: Fragment, splitStart: number): boolean {
+    const node = fragment.node as Text;
+    const offset = splitStart - fragment.start;
+    const length = node.data.length;
+
+    return offset > 0 && offset < length;
   }
 
   protected insertNewFragment(node: Text, start: number, rubyElement?: Element): Fragment {
@@ -815,6 +841,12 @@ export class TextHighlighter extends BaseTextHighlighter {
           this._tokenToFragmentsMap.get(token)?.push(fragment);
 
           break;
+        }
+
+        if (!this.canSplitFragmentAt(fragment, token.start)) {
+          this.fixFragmentParameters(fragment);
+
+          continue;
         }
 
         const newFragmentNode = this.splitFragmentsNode(fragment, token.start);
