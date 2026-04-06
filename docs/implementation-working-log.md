@@ -1,10 +1,10 @@
 # Implementation Working Log
 
 ## Current Snapshot
-- Current stage: Stage 1 - Extract current Jiten review flow behind an internal abstraction
-- Overall status: Stage 1 complete and verified (lint + build passing).
+- Current stage: Stage 2 - Move review-status ownership to the parse / enrichment pipeline
+- Overall status: Stage 2 complete and verified.
 - Active backend behavior: Review operations are routed through an internal review backend abstraction with `JitenReviewBackend` as the active implementation.
-- Last updated: 2026-04-06 22:41:00 +10:00
+- Last updated: 2026-04-06 23:24:00 +10:00
 
 ## Architectural Decisions
 ### Decision: Keep Stage 0 output documentation-only
@@ -67,8 +67,8 @@
 
 ## In Progress
 - Task: None.
-- Current status: Stage 1 closed.
-- Next immediate step: Begin Stage 2 planning/execution only after required preflight.
+- Current status: Stage 2 closed.
+- Next immediate step: Begin Stage 3 preflight only after reading this log and the next stage document.
 
 ## Open Tasks
 - [x] Trace page parsing and enrichment ownership in content scripts and background worker.
@@ -83,7 +83,7 @@
 
 ## Known Issues / Blockers
 - The path `docs/stages/stage-0-codebase-reconnaissance-and-architecture-map.md` is not present; canonical file is `docs/stages/stage_0_codebase_reconnaissance_and_architecture_map.md`.
-- No active blocker for Stage 1 completion.
+- No active blocker for current Stage 2 implementation.
 
 ## Verification Status
 - Verified:
@@ -98,16 +98,91 @@
   - Dependencies installed (`npm install`) and lockfile refreshed.
   - `npm run lint` passes.
   - `npm run build` passes.
+  - Stage 2 centralization pass:
+    - `Parser.vocabToCard()` now delegates review-state mapping to a dedicated enrichment helper.
+    - `getCardState()` now reuses the same review-state mapper for post-action refresh updates.
+  - Stage 2 popup-consumer pass:
+    - popup `cardStateUpdated` handling now only updates when the broadcast matches the currently displayed card.
+    - popup remains a consumer of already-enriched `card.cardState` metadata from registry/cache.
+  - Post-change checks:
+    - `npm run lint` passes.
+    - `npm run build` passes.
 
 ## Handoff Notes
 - Stage 0 and Stage 1 are complete.
+- Stage 2 is complete.
 - The next model instance should start by reading this log, then:
   - `docs/stage_execution_protocol.md`
-  - `docs/stages/stage_2_move_review_status_to_parse_enrichment_pipeline.md` (or current target stage)
+  - next target stage document in `docs/stages/`
   - `docs/stages/stage_0_architecture_note.md`
-- Resume by starting the next stage only, without changing Stage 1 behavior.
+- Resume at the next stage only; do not reopen Stage 2 unless regressions are found.
 
 ## Run History
+### 2026-04-06 - Stage 2 Implementation (Popup Consumer Guard + Stage Closure)
+- Completed:
+  - Audited popup/controller status ownership paths after centralization pass.
+  - Updated `src/apps/popup/popup.ts` `cardStateUpdated` listener so popup only reacts when the update targets the currently displayed card.
+  - Confirmed popup continues to render directly from registry-enriched `card.cardState`, with no first-pass due-state recomputation in popup rendering.
+  - Completed Stage 2 acceptance verification and closed stage.
+- Files changed:
+  - `src/apps/popup/popup.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Keep broadcast-driven refresh behavior but scope popup updates to current card identity to preserve consumer-only ownership boundaries.
+- Blockers / open issues:
+  - None identified for Stage 2 closure.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Start Stage 3 with required preflight and keep Stage 2 data-path as baseline.
+- Handoff:
+  - Stage 2 closed. Next run should begin at Stage 3 preflight.
+
+### 2026-04-06 - Stage 2 Implementation (Review-State Enrichment Centralization Pass)
+- Completed:
+  - Added `src/shared/jiten/map-review-states.ts` as a single mapper from raw Jiten numeric state arrays to `JitenCardState[]`.
+  - Refactored parse-time enrichment in `src/background-worker/parser/parser.ts`:
+    - extracted `enrichCardReviewState()` to make parse ownership explicit
+    - replaced inline `knownState` mapping with shared mapper usage.
+  - Refactored `src/shared/jiten/get-card-state.ts` to use the same shared mapper, removing duplicated state-map logic.
+  - Verified no behavior regression in build/lint checks.
+- Files changed:
+  - `src/shared/jiten/map-review-states.ts`
+  - `src/background-worker/parser/parser.ts`
+  - `src/shared/jiten/get-card-state.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Centralize Jiten raw-state -> `JitenCardState[]` mapping in one shared helper to keep parse enrichment and refresh paths aligned.
+  - Keep parse-time fallback semantics unchanged (`mature` for parse-enriched cards) while preserving refresh fallback semantics (`new` for lookup refresh).
+- Blockers / open issues:
+  - No technical blocker found in this pass.
+  - Stage-level follow-up remains: confirm all popup/controller paths are strictly consumers of enriched state and do not reintroduce ownership logic.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Audit popup/controller state derivation paths for final Stage 2 acceptance and then close the stage.
+- Handoff:
+  - Continue Stage 2 from popup/controller ownership validation; mapping centralization is complete.
+
+### 2026-04-06 - Stage 2 Start-of-Run
+- Stage:
+  - Stage 2 - Move review-status ownership to the parse / enrichment pipeline.
+- Plan for this run:
+  - Reconfirm the exact parse/enrichment attachment point where term-level `cardState` is set.
+  - Identify popup/controller code paths that still perform first-pass due-state ownership logic.
+  - Refactor data flow so popup reads enriched review metadata as primary source and no longer owns first-pass due-state computation.
+  - Preserve user-visible Jiten behavior and verify via lint/build and targeted flow checks.
+- Prerequisite observations:
+  - Stage 0 architecture map identified parse-time status attachment in background parser flow.
+  - Stage 1 review backend abstraction is complete and verified, providing a stable seam for unchanged review actions.
+  - No active blocker is recorded for Stage 2 start.
+- Risks/assumptions carried in:
+  - Risk: accidental behavior drift in popup rendering if fallback logic is removed too aggressively.
+  - Risk: hidden status dependencies outside popup rendering path.
+  - Assumption: parse-enriched `JitenCard.cardState` remains authoritative for first-pass status display.
+
 ### 2026-04-06 - Stage 1 Start-of-Run
 - Stage:
   - Stage 1 - Extract current Jiten review flow behind an internal abstraction.

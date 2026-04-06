@@ -124,6 +124,16 @@ export class Popup {
 
     onBroadcastMessage('cardStateUpdated', (wordId, readingIndex) => {
       setTimeout(() => {
+        const currentCard = this._card;
+
+        if (!currentCard) {
+          return;
+        }
+
+        if (currentCard.wordId !== wordId || currentCard.readingIndex !== readingIndex) {
+          return;
+        }
+
         this._card = Registry.getCard(wordId, readingIndex);
 
         if (this._hideAfterAction) {

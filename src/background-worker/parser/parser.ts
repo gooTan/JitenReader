@@ -1,5 +1,12 @@
+import { mapReviewStates } from '@shared/jiten/map-review-states';
 import { parse } from '@shared/jiten/parse';
-import { JitenCard, JitenRawVocabulary, JitenToken, JitenRuby } from '@shared/jiten/types';
+import {
+  JitenCard,
+  JitenCardState,
+  JitenRawVocabulary,
+  JitenRuby,
+  JitenToken,
+} from '@shared/jiten/types';
 import { Batch } from './parser.types';
 import { getPitchClass } from './pitch-accent-utils';
 
@@ -59,15 +66,6 @@ export class Parser {
   }
 
   private vocabToCard(vocabulary: JitenRawVocabulary[]): JitenCard[] {
-    const CARD_STATE_MAP: Record<number, string> = {
-      0: 'new',
-      1: 'young',
-      2: 'mature',
-      3: 'blacklisted',
-      4: 'due',
-      5: 'mastered',
-    };
-
     return vocabulary.map((vocab) => {
       const {
         wordId,
@@ -82,13 +80,7 @@ export class Parser {
         pitchAccents,
       } = vocab;
 
-      const cardState = knownState
-        .map((state) => CARD_STATE_MAP[state])
-        .filter((s): s is string => s !== undefined);
-
-      if (cardState.length === 0) {
-        cardState.push('mature');
-      }
+      const cardState = this.enrichCardReviewState(knownState);
 
       return {
         wordId,
@@ -106,6 +98,10 @@ export class Parser {
         wordWithReading: null,
       };
     });
+  }
+
+  private enrichCardReviewState(knownState: number[]): JitenCardState[] {
+    return mapReviewStates(knownState, JitenCardState.MATURE);
   }
 
   private parseTokens(

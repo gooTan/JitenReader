@@ -1,15 +1,7 @@
 import { JitenRequestOptions } from './api.types';
+import { mapReviewStates } from './map-review-states';
 import { request } from './request';
 import { JitenCardState } from './types';
-
-const CARD_STATE_MAP: Record<number, JitenCardState> = {
-  0: JitenCardState.NEW,
-  1: JitenCardState.YOUNG,
-  2: JitenCardState.MATURE,
-  3: JitenCardState.BLACKLISTED,
-  4: JitenCardState.DUE,
-  5: JitenCardState.MASTERED,
-};
 
 export const getCardState = async (
   wordId: number,
@@ -29,9 +21,5 @@ export const getCardState = async (
     return [JitenCardState.NEW];
   }
 
-  const states = firstWord
-    .map((state: number) => CARD_STATE_MAP[state])
-    .filter((s): s is JitenCardState => s !== undefined);
-
-  return states.length > 0 ? states : [JitenCardState.NEW];
+  return mapReviewStates(firstWord, JitenCardState.NEW);
 };
