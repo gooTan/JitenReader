@@ -10,6 +10,7 @@ import { JitenCardState, JitenRawVocabulary, JitenRating } from '@shared/jiten/t
 import {
   ReviewBackend,
   ReviewBackendCapabilities,
+  ReviewGradeContext,
   ReviewDeck,
   ReviewDeckAction,
   ReviewTermResolutionMap,
@@ -53,7 +54,12 @@ export class JitenReviewBackend implements ReviewBackend {
     return getCardState(wordId, readingIndex);
   }
 
-  public gradeCard(wordId: number, readingIndex: number, rating: JitenRating): Promise<void> {
+  public gradeCard(
+    wordId: number,
+    readingIndex: number,
+    rating: JitenRating,
+    _context?: ReviewGradeContext,
+  ): Promise<void> {
     return review(rating, wordId, readingIndex);
   }
 

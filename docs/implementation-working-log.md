@@ -1,10 +1,10 @@
 # Implementation Working Log
 
 ## Current Snapshot
-- Current stage: Stage 8A - Build the Anki Add-on
-- Overall status: Stage 8A implementation pass complete in-repo with standalone add-on scaffold, contract, handler, and unit tests. Live-Anki runtime verification remains pending.
-- Active backend behavior: Anki read-path uses deduplicated term/config planning, batched `findNotes` via AnkiConnect `multi`, shared `notesInfo`/`cardsInfo` hydration, short-lived caches, and fallback to single-query lookup when batched mode fails.
-- Last updated: 2026-04-07 14:40:00 +10:00
+- Current stage: Stage 8B - Integrate JitenReader with the Anki Add-on
+- Overall status: Stage 8B is complete and validated end-to-end for the single-target happy path plus explicit failure handling in live extension + Anki runs.
+- Active backend behavior: Anki read-path remains batched/deduplicated; Anki write-path submits `jitenTargetedReviewWriteV1` with explicit `cardId` + `rating`; add-on now attempts runtime registration of this action onto AnkiConnect startup surface.
+- Last updated: 2026-04-07 21:10:02 +10:00
 
 ## Architectural Decisions
 ### Decision: Keep Stage 0 output documentation-only
@@ -71,9 +71,9 @@
   - No source/runtime behavior files in `src/` were modified.
 
 ## In Progress
-- Task: Stage 8A closure and handoff.
-- Current status: Stage 8A implementation complete; awaiting Stage 8B integration work in extension.
-- Next immediate step: Begin Stage 8B preflight and wire extension write-path to add-on contract.
+- Task: Stage 8B closure and handoff.
+- Current status: Stage 8B accepted with live evidence for success and explicit failure paths.
+- Next immediate step: Start next stage preflight only.
 
 ## Open Tasks
 - [x] Trace page parsing and enrichment ownership in content scripts and background worker.
@@ -88,8 +88,7 @@
 
 ## Known Issues / Blockers
 - The path `docs/stages/stage-0-codebase-reconnaissance-and-architecture-map.md` is not present; canonical file is `docs/stages/stage_0_codebase_reconnaissance_and_architecture_map.md`.
-- No active blocker for Stage 8A implementation.
-- Verification gap: targeted review write handler is unit-tested with fake runtime but not yet smoke-tested inside a live Anki session.
+- No active blocker for Stage 8B.
 
 ## Verification Status
 - Verified:
@@ -120,14 +119,140 @@
 - Stage 4 is complete.
 - Stage 5 is complete.
 - Stage 6 is complete.
+- Stage 7 and Stage 8A are complete and previously validated.
 - The next model instance should start by reading this log, then:
   - `docs/stage_execution_protocol.md`
   - next target stage document in `docs/stages/`
   - `docs/stages/stage_8B_Integrate_JitenReader_with_the_Anki_Addon.md`
-- Resume at Stage 8B only; do not reopen Stage 8A unless live-Anki validation reveals add-on defects.
-- Stage 8A add-on contract and handler are now in place for integration.
+- Stage 8B is complete; do not reopen unless regressions are found during next-stage work.
+- Next run should begin at the next planned stage with standard preflight.
 
 ## Run History
+### 2026-04-07 - Stage 8B Live Validation and Closure
+- Completed:
+  - Validated startup routing fix in live Anki (`_jiten_targeted_review_handler_patched: true`) and eliminated `unsupported action` transport failures.
+  - Verified single-target happy path from extension popup click to add-on write:
+    - request action `jitenTargetedReviewWriteV1` sent with explicit `cardId` + `rating`
+    - authoritative success payload returned (`success: true`) with updated card fields.
+  - Verified explicit failure path:
+    - suspended target card returned structured failure (`success: false`, `code: CARD_NOT_REVIEWABLE`, reason `suspended`).
+  - Confirmed Stage 8B required behavior boundaries:
+    - no silent Jiten fallback on failed Anki review click
+    - explicit success/failure surfaced from authoritative backend response.
+- Files changed:
+  - `docs/implementation-working-log.md`
+- Verification status:
+  - Live end-to-end evidence captured in operator run:
+    - success response with `cardId`, `deckName`, `rating`, `queue`, `due`, `interval`, `reps`, `lapses`
+    - failure response with deterministic typed error for suspended card.
+- Next recommended step:
+  - Start next stage preflight and focus on targeted refresh/hybrid UX follow-up scope.
+- Handoff:
+  - Stage 8B is complete and accepted.
+  - Resume from next stage only, keeping current Stage 8B behavior as baseline.
+
+### 2026-04-07 - Stage 8B Follow-up (Load-Order-Proof AnkiConnect Routing Patch)
+- Completed:
+  - Addressed persistent `unsupported action` after restart by adding a robust fallback route in add-on bootstrap.
+  - Added runtime patching of AnkiConnect live request handler (`ac.handler` and `ac.server.handler`) to intercept `jitenTargetedReviewWriteV1` directly when class-method registration timing fails.
+  - Kept API-key validation behavior aligned before handling custom action payload.
+  - Corrected bootstrap location to the actual installed package entrypoint (`jiten_targeted_review/__init__.py`) after confirming Anki loads that file, not the addon-root `__init__.py`.
+  - Added safe non-Anki import guard so unit tests outside Anki runtime do not fail on `aqt` imports.
+- Files changed:
+  - `anki-addon/__init__.py`
+  - `anki-addon/jiten_targeted_review/__init__.py`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Use dual strategy for custom action exposure:
+    - preferred: register class API method on `AnkiConnect`
+    - fallback: patch live handler path for load-order resilience.
+- Verification status:
+  - `py -3 -m unittest discover -s anki-addon/tests -p "test_*.py"` passes (`5` tests).
+- Next recommended step:
+  - Install updated `anki-addon/jiten_targeted_review/__init__.py` into the installed add-on package, restart Anki, and re-run popup click to confirm `unsupported action` is resolved.
+
+### 2026-04-07 - Stage 8B Follow-up (AnkiConnect Action Registration Fix)
+- Completed:
+  - Investigated live Stage 8B failure response `{"result": null, "error": "unsupported action"}` for `jitenTargetedReviewWriteV1`.
+  - Confirmed extension payload path was correct and failure was bridge-side action registration gap in AnkiConnect.
+  - Implemented add-on bootstrap registration in `anki-addon/__init__.py` that:
+    - detects the loaded AnkiConnect module at runtime
+    - injects a decorated `jitenTargetedReviewWriteV1` API method onto `AnkiConnect`
+    - retries registration on a short timer until AnkiConnect is available.
+- Files changed:
+  - `anki-addon/__init__.py`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Keep transport unchanged (AnkiConnect action call) and fix compatibility by runtime action injection instead of introducing a separate HTTP server/bridge.
+  - Use a bounded retry bootstrap because add-on load order can vary and AnkiConnect may not be imported when this add-on first initializes.
+- Blockers / open issues:
+  - No active implementation blocker.
+  - Requires reinstall/update of installed add-on copy and Anki restart before validation.
+- Verification status:
+  - `py -3 -m unittest discover -s anki-addon/tests -p "test_*.py"` passes (`5` tests).
+- Next recommended step:
+  - Update installed add-on files, restart Anki, and re-run popup review click in Anki mode to confirm `unsupported action` is resolved.
+- Handoff:
+  - Follow-up fix is in repo; next run should focus on live validation evidence and stage closure.
+
+### 2026-04-07 - Stage 8B Implementation (Extension Integration Pass)
+- Completed:
+  - Added extension-side typed Anki client action for Stage 8A contract endpoint (`jitenTargetedReviewWriteV1`).
+  - Implemented Anki backend targeted write submission in `gradeCard()` with explicit `cardId`, `rating`, and `requestId`.
+  - Normalized add-on structured error responses into `TargetedReviewWriteError` and returned explicit failure payloads through `GradeCardCommand` result.
+  - Removed silent Jiten fallback behavior for Anki grade-click failures in `GradeCardCommandHandler`.
+  - Updated popup grading flow to:
+    - pass selected Stage 7 target card (`reviewMetadata.target.ankiCardId`) into `GradeCardCommand`
+    - consume structured success/failure result
+    - surface explicit failure toasts
+    - mark local review metadata stale on confirmed Anki success (without optimistic state mutation).
+- Files changed:
+  - `src/shared/anki/api.types.ts`
+  - `src/shared/anki/targeted-review-write.ts`
+  - `src/background-worker/review-backend/review-backend.types.ts`
+  - `src/background-worker/review-backend/review-backend.errors.ts`
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+  - `src/background-worker/review-backend/jiten-review-backend.ts`
+  - `src/shared/messages/background/grade-card.command.types.ts`
+  - `src/shared/messages/background/grade-card.command.ts`
+  - `src/background-worker/jiten-card-actions/grade-card-command.handler.ts`
+  - `src/apps/popup/actions/grading-controller.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Keep Stage 8B write integration localized to existing grade command chain, extending command payload/result types instead of adding a separate write command path.
+  - Treat add-on `success: false` as first-class structured failure (not transport failure), return it to popup, and avoid state refresh side effects.
+  - Use stale-marking (`freshness: 'stale'`, `dueState: 'unknown'`) after confirmed Anki write to avoid optimistic trust until targeted refresh is implemented.
+- Blockers / open issues:
+  - No active implementation blocker.
+  - Pending live validation for end-to-end popup flow against running Anki add-on.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Run live Stage 8B checks in Anki mode (single mapped target happy-path + representative failure cases) and record evidence before stage closure.
+- Handoff:
+  - Stage 8B core code path is implemented and compiles cleanly.
+  - Next run should focus on live validation evidence and any follow-up fixes needed for closure.
+
+### 2026-04-07 - Stage 8B Start-of-Run
+- Stage:
+  - Stage 8B - Integrate JitenReader with the Anki add-on.
+- Plan for this run:
+  - Audit the existing popup review action flow and locate where Anki-mode rating submissions currently route.
+  - Add an extension-side Stage 8A contract client that submits targeted review writes to the add-on with explicit `cardId` and `rating`.
+  - Wire popup review actions in Anki mode to the targeted request path using the Stage 7 selected target card metadata.
+  - Handle structured success/failure responses explicitly and avoid optimistic local-state mutation on failure.
+  - Mark affected card enrichment state stale or queue targeted refresh preparation hooks after confirmed success.
+  - Verify integration behavior with lint/build and focused flow checks for happy-path plus basic failure handling.
+- Prerequisite observations:
+  - Stage 8A add-on contract and live validation are complete, including deterministic typed error responses and successful writes.
+  - Stage 7 mapping flow already provides deterministic single-target metadata for the supported mapped-card case.
+  - Current working log indicates no active blocker to begin Stage 8B extension integration.
+- Risks/assumptions carried in:
+  - Risk: sending popup-word identity instead of selected target-card identity could write to the wrong Anki card; mitigation is strict reliance on Stage 7 selected target card fields.
+  - Risk: accidental fallback to Jiten write path during Anki submission failure; mitigation is explicit backend-gated branching and deterministic error surfacing.
+  - Assumption: Stage 8A action (`jitenTargetedReviewWriteV1`) is reachable through existing AnkiConnect transport in the extension runtime.
+
 ### 2026-04-07 - Stage 7B Closure (Performance Acceptance + Handoff)
 - Completed:
   - Finalized parse-read performance optimization for Anki mapping with:

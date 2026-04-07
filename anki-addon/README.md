@@ -82,7 +82,7 @@ Failure:
 - `INVALID_CARD_ID`
 - `INVALID_RATING`
 - `CARD_NOT_FOUND`
-- `CARD_NOT_REVIEWABLE`
+- `CARD_NOT_REVIEWABLE` (includes suspended/buried and scheduler rejection such as `not_at_top_of_queue`)
 - `APPLY_FAILED`
 - `INTERNAL_ERROR`
 
@@ -110,4 +110,3 @@ Run:
 ```bash
 python -m unittest anki-addon/tests/test_service.py
 ```
-

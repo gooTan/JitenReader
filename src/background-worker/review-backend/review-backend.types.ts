@@ -25,12 +25,21 @@ export type ReviewBackendCapabilities = {
 };
 
 export type ReviewBackendParseMetrics = Record<string, number | string | boolean>;
+export type ReviewGradeContext = {
+  requestId?: string;
+  targetCardId?: number;
+};
 
 export interface ReviewBackend {
   getCapabilities(): ReviewBackendCapabilities;
   getParseReviewStates(vocabulary: JitenRawVocabulary[]): Promise<ReviewTermResolutionMap>;
   getParseMetrics?(): ReviewBackendParseMetrics | undefined;
-  gradeCard(wordId: number, readingIndex: number, rating: JitenRating): Promise<void>;
+  gradeCard(
+    wordId: number,
+    readingIndex: number,
+    rating: JitenRating,
+    context?: ReviewGradeContext,
+  ): Promise<void>;
   getCardState(wordId: number, readingIndex: number): Promise<JitenCardState[]>;
   forgetCard(wordId: number, readingIndex: number): Promise<void>;
   runDeckAction(

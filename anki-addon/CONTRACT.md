@@ -66,5 +66,4 @@ type TargetedReviewWriteErrorV1 = {
 
 - The operation targets the exact `cardId`.
 - It does not require or depend on Anki GUI reviewer selection state.
-- `CARD_NOT_REVIEWABLE` is currently returned for suspended/buried queues.
-
+- `CARD_NOT_REVIEWABLE` is currently returned for suspended/buried queues and scheduler rejection cases such as `not_at_top_of_queue`.

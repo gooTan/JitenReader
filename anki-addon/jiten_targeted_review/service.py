@@ -138,13 +138,25 @@ def _apply_targeted_review(request: TargetedReviewRequest, runtime: AnkiRuntime)
     try:
         runtime.answer_card(target_card, ease)
     except Exception as err:
+        err_text = str(err).strip()
+        if 'not at top of queue' in err_text.lower():
+            return error_response(
+                version=request.version,
+                request_id=request.request_id,
+                error=ErrorPayload(
+                    code='CARD_NOT_REVIEWABLE',
+                    message=f'Card {request.card_id} is not reviewable (not_at_top_of_queue).',
+                    details={'cardId': request.card_id, 'reason': 'not_at_top_of_queue'},
+                ),
+            )
+
         return error_response(
             version=request.version,
             request_id=request.request_id,
             error=ErrorPayload(
                 code='APPLY_FAILED',
                 message=f'Failed to apply rating to card {request.card_id}.',
-                details={'cardId': request.card_id, 'error': str(err)},
+                details={'cardId': request.card_id, 'error': err_text},
             ),
         )
 
@@ -163,4 +175,3 @@ def _apply_targeted_review(request: TargetedReviewRequest, runtime: AnkiRuntime)
     deck_name = runtime.get_deck_name(int(updated_card.did))
     result = _snapshot(updated_card, request.rating, ease, deck_name)
     return success_response(request, result=result)
-

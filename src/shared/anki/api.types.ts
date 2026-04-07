@@ -10,6 +10,54 @@ type MultiRequest = {
     params?: Record<string, unknown>;
   }[];
 };
+type TargetedReviewWriteRating = 'again' | 'hard' | 'good' | 'easy';
+type TargetedReviewWriteRequest = {
+  version: 1;
+  requestId?: string;
+  cardId: number;
+  rating: TargetedReviewWriteRating;
+};
+
+type TargetedReviewWriteSuccess = {
+  success: true;
+  version: 1;
+  requestId?: string;
+  result: {
+    cardId: number;
+    noteId: number;
+    deckName: string;
+    rating: TargetedReviewWriteRating;
+    ease: 1 | 2 | 3 | 4;
+    reviewState: 'new' | 'learning' | 'review' | 'suspended' | 'buried' | 'unknown';
+    queue: number;
+    type: number;
+    due: number;
+    interval: number;
+    reps: number;
+    lapses: number;
+  };
+};
+
+type TargetedReviewWriteError = {
+  success: false;
+  version: 1;
+  requestId?: string;
+  error: {
+    code:
+      | 'INVALID_REQUEST'
+      | 'UNSUPPORTED_VERSION'
+      | 'INVALID_CARD_ID'
+      | 'INVALID_RATING'
+      | 'CARD_NOT_FOUND'
+      | 'CARD_NOT_REVIEWABLE'
+      | 'APPLY_FAILED'
+      | 'INTERNAL_ERROR';
+    message: string;
+    details?: Record<string, unknown>;
+  };
+};
+
+export type TargetedReviewWriteResponse = TargetedReviewWriteSuccess | TargetedReviewWriteError;
 
 export type AnkiNoteInfo = {
   noteId: number;
@@ -55,4 +103,5 @@ export type AnkiEndpoints = {
   notesInfo: [NotesInfoRequest, AnkiNoteInfo[]];
   cardsInfo: [CardsInfoRequest, AnkiCardInfo[]];
   multi: [MultiRequest, unknown[]];
+  jitenTargetedReviewWriteV1: [TargetedReviewWriteRequest, TargetedReviewWriteResponse];
 };

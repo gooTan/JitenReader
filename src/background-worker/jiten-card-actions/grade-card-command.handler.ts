@@ -1,9 +1,10 @@
 import { MessageSender } from '@shared/extension/types';
 import { JitenRating } from '@shared/jiten/types';
 import { GradeCardCommand } from '@shared/messages/background/grade-card.command';
+import { GradeCardCommandResult } from '@shared/messages/background/grade-card.command.types';
 import { BackgroundCommandHandler } from '../lib/background-command-handler';
 import { ReviewBackendSelector } from '../review-backend/review-backend-selector';
-import { UnsupportedReviewOperationError } from '../review-backend/review-backend.errors';
+import { TargetedReviewWriteError } from '../review-backend/review-backend.errors';
 
 export class GradeCardCommandHandler extends BackgroundCommandHandler<GradeCardCommand> {
   public readonly command = GradeCardCommand;
@@ -17,18 +18,35 @@ export class GradeCardCommandHandler extends BackgroundCommandHandler<GradeCardC
     wordId: number,
     readingIndex: number,
     rating: JitenRating,
-  ): Promise<void> {
+    targetCardId?: number,
+  ): Promise<GradeCardCommandResult> {
+    const backendStatus = await this._reviewBackendSelector.getStatus();
     const reviewBackend = await this._reviewBackendSelector.getActiveBackend();
-    const jitenBackend = this._reviewBackendSelector.getBackend('jiten');
 
     try {
-      await reviewBackend.gradeCard(wordId, readingIndex, rating);
+      await reviewBackend.gradeCard(wordId, readingIndex, rating, {
+        requestId: `${wordId}/${readingIndex}:${Date.now()}`,
+        targetCardId,
+      });
+
+      return {
+        success: true,
+        backend: backendStatus.activeBackend,
+      };
     } catch (error) {
-      if (!(error instanceof UnsupportedReviewOperationError) || !jitenBackend) {
-        throw error;
+      if (backendStatus.activeBackend === 'anki' && error instanceof TargetedReviewWriteError) {
+        return {
+          success: false,
+          backend: 'anki',
+          error: {
+            code: error.code,
+            message: error.message,
+            details: error.details,
+          },
+        };
       }
 
-      await jitenBackend.gradeCard(wordId, readingIndex, rating);
+      throw error;
     }
   }
 }

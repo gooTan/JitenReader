@@ -4,6 +4,7 @@ import { findNotes } from '@shared/anki/find-notes';
 import { findNotesMany } from '@shared/anki/find-notes-many';
 import { getApiVersion } from '@shared/anki/get-api-version';
 import { notesInfo } from '@shared/anki/notes-info';
+import { targetedReviewWrite } from '@shared/anki/targeted-review-write';
 import { DiscoverWordConfiguration } from '@shared/anki/types';
 import { getConfiguration } from '@shared/configuration/get-configuration';
 import {
@@ -12,10 +13,11 @@ import {
   JitenRating,
   ReviewTargetMetadata,
 } from '@shared/jiten/types';
-import { UnsupportedReviewOperationError } from './review-backend.errors';
+import { TargetedReviewWriteError, UnsupportedReviewOperationError } from './review-backend.errors';
 import {
   ReviewBackend,
   ReviewBackendCapabilities,
+  ReviewGradeContext,
   ReviewBackendParseMetrics,
   ReviewDeck,
   ReviewDeckAction,
@@ -187,8 +189,45 @@ export class AnkiReviewBackend implements ReviewBackend {
     return [];
   }
 
-  public gradeCard(_wordId: number, _readingIndex: number, _rating: JitenRating): Promise<void> {
-    throw new UnsupportedReviewOperationError('gradeCard', 'anki');
+  public async gradeCard(
+    _wordId: number,
+    _readingIndex: number,
+    rating: JitenRating,
+    context?: ReviewGradeContext,
+  ): Promise<void> {
+    if (rating === 'unknown') {
+      throw new TargetedReviewWriteError(
+        'INVALID_RATING',
+        'Cannot submit an unknown rating to Anki.',
+      );
+    }
+
+    const targetCardId = context?.targetCardId;
+
+    if (!targetCardId || targetCardId <= 0) {
+      throw new TargetedReviewWriteError(
+        'MISSING_TARGET_CARD',
+        'Missing selected Anki target card for review submission.',
+      );
+    }
+
+    const response = await targetedReviewWrite(
+      {
+        version: 1,
+        requestId: context?.requestId,
+        cardId: targetCardId,
+        rating,
+      },
+      { showToastOnError: false },
+    );
+
+    if (!response.success) {
+      throw new TargetedReviewWriteError(
+        response.error.code,
+        response.error.message,
+        response.error.details,
+      );
+    }
   }
 
   public forgetCard(_wordId: number, _readingIndex: number): Promise<void> {
