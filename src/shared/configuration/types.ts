@@ -129,6 +129,7 @@ export type ConfigurationSchema = {
   enableAnkiIntegration: boolean;
   ankiUrl: string;
   ankiProxyUrl: string;
+  ankiRolloverHour: number;
   ankiMiningConfig: DeckConfiguration;
   ankiBlacklistConfig: DeckConfiguration;
   ankiNeverForgetConfig: DeckConfiguration;

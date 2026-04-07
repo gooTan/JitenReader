@@ -71,6 +71,24 @@ def _reviewability_for_queue(queue: int) -> Reviewability:
     return Reviewability(True)
 
 
+def _scheduler_non_reviewable_reason(error_text: str) -> str | None:
+    normalised = error_text.lower()
+
+    if 'top of queue' in normalised:
+        return 'not_at_top_of_queue'
+
+    if 'not due' in normalised or 'due in' in normalised:
+        return 'not_due'
+
+    if 'suspend' in normalised:
+        return 'suspended'
+
+    if 'buried' in normalised or 'bury' in normalised:
+        return 'buried'
+
+    return None
+
+
 def _snapshot(card: CardProtocol, rating: str, ease: int, deck_name: str) -> dict[str, Any]:
     return {
         'cardId': int(card.id),
@@ -139,14 +157,16 @@ def _apply_targeted_review(request: TargetedReviewRequest, runtime: AnkiRuntime)
         runtime.answer_card(target_card, ease)
     except Exception as err:
         err_text = str(err).strip()
-        if 'not at top of queue' in err_text.lower():
+        non_reviewable_reason = _scheduler_non_reviewable_reason(err_text)
+
+        if non_reviewable_reason is not None:
             return error_response(
                 version=request.version,
                 request_id=request.request_id,
                 error=ErrorPayload(
                     code='CARD_NOT_REVIEWABLE',
-                    message=f'Card {request.card_id} is not reviewable (not_at_top_of_queue).',
-                    details={'cardId': request.card_id, 'reason': 'not_at_top_of_queue'},
+                    message=f'Card {request.card_id} is not reviewable ({non_reviewable_reason}).',
+                    details={'cardId': request.card_id, 'reason': non_reviewable_reason},
                 ),
             )
 

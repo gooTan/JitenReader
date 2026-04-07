@@ -24,16 +24,22 @@ class FakeCard:
 
 
 class FakeRuntime:
-    def __init__(self, cards: dict[int, FakeCard], fail_apply: bool = False):
+    def __init__(
+        self,
+        cards: dict[int, FakeCard],
+        fail_apply: bool = False,
+        fail_apply_message: str = 'scheduler error',
+    ):
         self._cards = cards
         self._fail_apply = fail_apply
+        self._fail_apply_message = fail_apply_message
 
     def get_card(self, card_id: int) -> FakeCard | None:
         return self._cards.get(card_id)
 
     def answer_card(self, card: FakeCard, ease: int) -> None:
         if self._fail_apply:
-            raise RuntimeError('scheduler error')
+            raise RuntimeError(self._fail_apply_message)
         card.reps += 1
         if ease == 1:
             card.lapses += 1
@@ -172,6 +178,38 @@ class TargetedReviewServiceTests(unittest.TestCase):
         )
         self.assertFalse(response['success'])
         self.assertEqual(response['error']['code'], 'APPLY_FAILED')
+
+    def test_not_due_scheduler_rejection_maps_to_card_not_reviewable(self) -> None:
+        runtime = FakeRuntime(
+            {
+                2020: FakeCard(
+                    id=2020,
+                    nid=3020,
+                    did=4020,
+                    queue=2,
+                    type=2,
+                    due=42,
+                    ivl=10,
+                    reps=4,
+                    lapses=1,
+                )
+            },
+            fail_apply=True,
+            fail_apply_message='Card is not due yet.',
+        )
+
+        response = handle_request(
+            {
+                'version': 1,
+                'cardId': 2020,
+                'rating': 'good',
+            },
+            runtime,
+        )
+
+        self.assertFalse(response['success'])
+        self.assertEqual(response['error']['code'], 'CARD_NOT_REVIEWABLE')
+        self.assertEqual(response['error']['details']['reason'], 'not_due')
 
 
 if __name__ == '__main__':

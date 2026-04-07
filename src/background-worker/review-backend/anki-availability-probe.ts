@@ -1,4 +1,5 @@
 import { getApiVersion } from '@shared/anki/get-api-version';
+import { getCollectionCreationTime } from '@shared/anki/get-collection-creation-time';
 import { getConfiguration } from '@shared/configuration/get-configuration';
 import { ReviewBackendAvailability } from './review-backend-selector.types';
 
@@ -14,7 +15,20 @@ export const probeAnkiAvailability = async (): Promise<ReviewBackendAvailability
   try {
     const apiVersion = await getApiVersion({ ankiConnectUrl: ankiUrl });
 
-    return apiVersion >= MINIMUM_ANKI_CONNECT_API_VERSION ? 'available' : 'unavailable';
+    if (apiVersion < MINIMUM_ANKI_CONNECT_API_VERSION) {
+      return 'unavailable';
+    }
+
+    const collectionCreationTime = await getCollectionCreationTime({
+      ankiConnectUrl: ankiUrl,
+      showToastOnError: false,
+    });
+
+    if (!Number.isFinite(collectionCreationTime) || collectionCreationTime <= 0) {
+      return 'unavailable';
+    }
+
+    return 'available';
   } catch {
     return 'unavailable';
   }

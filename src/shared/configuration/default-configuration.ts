@@ -127,6 +127,7 @@ export const DEFAULT_CONFIGURATION = Object.freeze<ConfigurationSchema>({
   enableAnkiIntegration: false,
   ankiUrl: 'http://localhost:8765',
   ankiProxyUrl: '',
+  ankiRolloverHour: 4,
   ankiMiningConfig: {
     deck: '',
     model: '',

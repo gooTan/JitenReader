@@ -1,4 +1,4 @@
-import { JitenCard } from '@shared/jiten/types';
+import { JitenCard, ReviewMetadata } from '@shared/jiten/types';
 import { UpdateCardStateCommand } from '@shared/messages/background/update-card-state.command';
 import { onBroadcastMessage } from '@shared/messages/receiving/on-broadcast-message';
 
@@ -21,14 +21,18 @@ export abstract class BaseController {
     this.updateCardState(card);
   }
 
-  public updateCardState(card: JitenCard): void {
+  public updateCardState(
+    card: JitenCard,
+    targetCardId?: number,
+    previousMetadata?: ReviewMetadata,
+  ): void {
     const { wordId, readingIndex } = card;
 
     if (BaseController._suspendUpdateWordStates) {
       return;
     }
 
-    new UpdateCardStateCommand(wordId, readingIndex).send();
+    new UpdateCardStateCommand(wordId, readingIndex, targetCardId, previousMetadata).send();
   }
 
   protected abstract applyConfiguration(): Promise<void>;

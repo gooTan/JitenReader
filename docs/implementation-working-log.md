@@ -1,10 +1,10 @@
 # Implementation Working Log
 
 ## Current Snapshot
-- Current stage: Stage 8B - Integrate JitenReader with the Anki Add-on
-- Overall status: Stage 8B is complete and validated end-to-end for the single-target happy path plus explicit failure handling in live extension + Anki runs.
-- Active backend behavior: Anki read-path remains batched/deduplicated; Anki write-path submits `jitenTargetedReviewWriteV1` with explicit `cardId` + `rating`; add-on now attempts runtime registration of this action onto AnkiConnect startup surface.
-- Last updated: 2026-04-07 21:10:02 +10:00
+- Current stage: Stage 9 - Add Targeted Refresh, Failure Handling, and Hybrid UX Clarity
+- Overall status: Stage 8B remains complete and validated; Stage 9 follow-up includes residual scheduling fixes for cache invalidation and configurable rollover hour.
+- Active backend behavior: successful targeted writes now invalidate affected Anki card cache entries; due-day classification now uses configurable `ankiRolloverHour` (default `4`) rather than hardcoded rollover.
+- Last updated: 2026-04-07 21:56:37 +10:00
 
 ## Architectural Decisions
 ### Decision: Keep Stage 0 output documentation-only
@@ -128,6 +128,488 @@
 - Next run should begin at the next planned stage with standard preflight.
 
 ## Run History
+### 2026-04-07 - Stage 9 Follow-up Implementation (P3 Cache Boundary Invalidation Hardening)
+- Completed:
+  - Added explicit Anki backend cache reset API to clear all cached scheduling/mapping context on demand.
+  - Wired cache reset to boundary-level broadcast handlers:
+    - `profileSwitched`
+    - `configurationUpdated`
+  - This ensures stale lookup/card/note/scheduling context caches are flushed immediately when profile/config changes can invalidate prior Anki-derived state.
+- Files changed:
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+  - `src/background-worker/background-worker.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Keep cache invalidation explicit at integration boundaries rather than relying on TTL expiry.
+  - Reset both selector availability cache and Anki backend internal caches on boundary events for deterministic post-change behavior.
+- Blockers / open issues:
+  - No active blocker.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Live-verify by changing profile or Anki URL/model/deck configuration and confirming due/mapping metadata refreshes immediately without stale carryover.
+- Handoff:
+  - Requested P3 robustness fix is implemented and verified.
+  - Continue with any remaining final Stage 9 closure evidence.
+
+### 2026-04-07 - Stage 9 Follow-up Start-of-Run (P3 Cache Boundary Invalidation Hardening)
+- Stage:
+  - Stage 9 - Add targeted refresh, failure handling, and hybrid UX clarity.
+- Plan for this run:
+  - Implement robust cache invalidation for Anki backend scheduling/mapping caches on profile/config boundary events.
+  - Wire explicit cache reset from background worker boundary handlers to avoid stale due/mapping metadata after endpoint/profile/config changes.
+  - Keep behavior scoped to Anki backend state caches only and preserve strict scheduling source-of-truth logic.
+  - Verify via lint/build.
+- Prerequisite observations:
+  - Current boundary handlers invalidate selector availability cache only.
+  - Anki backend retains independent lookup/card/note/scheduling context caches that can survive profile/config changes.
+- Risks/assumptions carried in:
+  - Assumption: immediate cache reset on boundary events is preferable to TTL-wait staleness for scheduling integrity.
+  - Risk: additional cache misses after config/profile change; acceptable tradeoff for correctness.
+
+### 2026-04-07 - Stage 9 Follow-up Implementation (P2 Queue-4 Scheduling Consistency Hardening)
+- Completed:
+  - Added explicit queue `4` handling in Anki due-state evaluation.
+  - Queue `4` (preview-learning) now follows learning-style timestamp due checks, aligning extension metadata behavior with add-on review-state classification (`learning`) and avoiding silent “never due” drift.
+  - Preserved strict scheduling-source-of-truth behavior from prior pass:
+    - queue `2`/`3` remain collection-day based
+    - no mixed-scale fallback for review/day queues when scheduling context is unavailable.
+- Files changed:
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Keep queue semantics explicit by declaring queue `4` constant and routing it through timestamp-based learning due logic.
+  - Prefer narrow queue-local correction over broad scheduling refactor to minimize regression surface.
+- Blockers / open issues:
+  - No active blocker.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Live-check a filtered-deck/preview-learning card path and confirm popup due badge transitions match Anki browser state.
+- Handoff:
+  - Requested P2 scheduling consistency fix is implemented and verified.
+  - Continue any remaining scheduling audit items (cache/profile invalidation edge case) as separate scoped follow-up if needed.
+
+### 2026-04-07 - Stage 9 Follow-up Start-of-Run (P2 Queue-4 Scheduling Consistency Hardening)
+- Stage:
+  - Stage 9 - Add targeted refresh, failure handling, and hybrid UX clarity.
+- Plan for this run:
+  - Implement robust handling for Anki queue `4` (preview-learning) in extension-side due evaluation.
+  - Keep queue semantics consistent with add-on scheduler state classification and avoid “never due” drift for preview-learning cards.
+  - Keep strict Anki source-of-truth protections from previous hardening pass intact.
+  - Verify with lint/build and record completion details.
+- Prerequisite observations:
+  - Latest audit found queue `4` is currently unhandled in `isCardDue`, while add-on review-state mapping treats queue `4` as learning.
+  - This can cause scheduling inconsistency in popup due metadata for preview-learning cards.
+- Risks/assumptions carried in:
+  - Assumption: queue `4` due values should be evaluated with learning-style timestamp semantics in extension metadata.
+  - Risk: scheduler edge cases across Anki versions; mitigation is minimal, queue-local change and existing strict availability gating.
+
+### 2026-04-07 - Stage 9 Follow-up Implementation (Strict Anki Source-of-Truth Scheduling Hardening)
+- Completed:
+  - Hardened Anki availability gating to require scheduling-critical capability:
+    - availability probe now validates both AnkiConnect API version and successful/valid `getCollectionCreationTime` response.
+  - Removed unsafe scheduling degradation path in Anki backend:
+    - collection creation probe failures are no longer silently swallowed
+    - invalid/missing collection creation context now fails scheduling context loading explicitly
+    - review/day queue due checks no longer fall back to epoch-day comparison when collection-day context is unavailable.
+  - Preserved queue semantics:
+    - queue `2` and queue `3` stay day-number based (collection-day scale)
+    - queue `1` remains timestamp-based.
+- Files changed:
+  - `src/background-worker/review-backend/anki-availability-probe.ts`
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Prefer strict capability gating over degraded due-state guesses when Anki is configured as active review backend.
+  - Treat scheduling-context failure as backend unavailability condition rather than attempting mixed-scale fallback math.
+- Blockers / open issues:
+  - No active blocker.
+  - When scheduling capability is unavailable, backend selection can move away from Anki at boundary-level fallback; this is intentional to prevent misleading due states.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Run live validation in Anki-enabled mode and confirm:
+    - cards do not show stale/incorrect `due` from fallback math,
+    - backend availability/status reflects scheduling-context failures clearly.
+- Handoff:
+  - P1/P2 hardening for strict Anki scheduling source-of-truth behavior is implemented.
+  - Continue with live UX verification and any final Stage 9 closure evidence.
+
+### 2026-04-07 - Stage 9 Follow-up Start-of-Run (Strict Anki Source-of-Truth Scheduling Hardening)
+- Stage:
+  - Stage 9 - Add targeted refresh, failure handling, and hybrid UX clarity.
+- Plan for this run:
+  - Remove unsafe scheduling fallback behavior that can compare Anki review/day due values against epoch-day numbers.
+  - Harden Anki availability probing so scheduling-critical capability is required before backend is treated as available.
+  - Keep behavior transparent when Anki scheduling context is unavailable by failing cleanly at backend boundary instead of silently guessing due state.
+  - Verify with lint/build.
+- Prerequisite observations:
+  - A follow-up audit identified that collection-day probe failure can silently reintroduce false due labels.
+  - Existing availability probe validates API version only and does not validate scheduling-critical Anki capability.
+- Risks/assumptions carried in:
+  - Assumption: strict capability gating is preferable to degraded due-state guesses for Anki-backed mode.
+  - Risk: stricter probe may classify some marginal setups as unavailable; this is intentional to preserve scheduling truthfulness.
+
+### 2026-04-07 - Stage 9 Follow-up Implementation (Fix Remaining Scheduling Due Logic Bugs)
+- Completed:
+  - Fixed Anki review/day-queue due evaluation to use collection-day scale when available:
+    - added AnkiConnect `getCollectionCreationTime` support in shared Anki request types
+    - added a shared request wrapper for collection creation time
+    - backend now caches and normalises collection creation timestamps (seconds or milliseconds)
+    - queue `2` (review) and queue `3` (day learning/relearning) now compare `due` against current collection-day number
+  - Fixed queue `3` misclassification by removing it from second-based due checks (queue `1` remains second-based).
+  - Added defensive fallback behavior:
+    - if collection creation time cannot be loaded, backend falls back to existing rollover-aware epoch-day comparison rather than failing parse/refresh.
+- Files changed:
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+  - `src/shared/anki/api.types.ts`
+  - `src/shared/anki/get-collection-creation-time.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Treat queue `2` and queue `3` as day-number queues and evaluate against Anki collection-day context.
+  - Keep queue `1` evaluation second-based.
+  - Cache collection creation context with TTL to avoid per-card scheduling overhead while preserving resilience if Anki is temporarily unavailable.
+- Blockers / open issues:
+  - No active blocker.
+  - Accuracy now depends on AnkiConnect exposing `getCollectionCreationTime`; fallback path remains in place when unavailable.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Validate live against known previously incorrect cards (`今日`) and queue `3` cards to confirm `due` badges now match Anki browser due status.
+- Handoff:
+  - Both requested scheduling bugs are fixed in backend due evaluation logic and verified by lint/build.
+  - Continue with live Stage 9 evidence collection and closure.
+
+### 2026-04-07 - Stage 9 Follow-up Start-of-Run (Fix Remaining Scheduling Due Logic Bugs)
+- Stage:
+  - Stage 9 - Add targeted refresh, failure handling, and hybrid UX clarity.
+- Plan for this run:
+  - Fix review-card due evaluation so queue `2` review due values are compared against the correct Anki day scale instead of Unix-epoch day numbers.
+  - Fix queue `3` (day-learning/relearning) due evaluation so it uses day-based due checks, not second-based checks.
+  - Keep changes strictly scoped to scheduling logic in the Anki review backend and related Anki API support.
+  - Verify with lint/build and then record outcomes in this log.
+- Prerequisite observations:
+  - Prior Stage 9 follow-ups already fixed targeted refresh freshness, scheduler non-reviewable mapping, cache invalidation after writes, and configurable rollover caching.
+  - Remaining user-reported symptom is incorrect `due` highlighting for cards that are not currently due.
+- Risks/assumptions carried in:
+  - Assumption: Anki due semantics for queue `2`/`3` require collection-day context rather than Unix-day comparison.
+  - Risk: introducing new AnkiConnect dependency points may fail on older setups; mitigation is defensive fallback behavior in backend logic.
+
+### 2026-04-07 - Stage 9 Follow-up Implementation (Residual Scheduling Fixes: Cache + Rollover Config)
+- Completed:
+  - Fixed parse-read staleness after successful targeted review writes by invalidating affected card cache entries in Anki backend immediately after successful write submission.
+  - Replaced hardcoded rollover-hour behavior with configurable rollover alignment:
+    - added `ankiRolloverHour` to configuration schema/defaults (default `4`)
+    - Anki backend now loads and caches this value and uses it for review due-day boundary calculations.
+  - Kept learning/relearning timestamp-based due checks unchanged.
+- Files changed:
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+  - `src/shared/configuration/types.ts`
+  - `src/shared/configuration/default-configuration.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Use targeted card-level cache invalidation for post-write consistency while preserving existing parse performance characteristics.
+  - Use configuration-based rollover alignment to remove hardcoded scheduling boundary assumptions without adding Stage 9 UI redesign scope.
+- Blockers / open issues:
+  - No active blocker.
+  - If users need non-default rollover, they must set `ankiRolloverHour` in configuration until a dedicated UI control is added.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+  - `py -3 -m unittest discover -s anki-addon/tests -p "test_*.py"` passes (`6` tests).
+- Next recommended step:
+  - Validate live with immediate reparse after review click and confirm due/status updates are no longer stale.
+- Handoff:
+  - Residual scheduling bugs requested in this run are fixed and verified.
+  - Continue Stage 9 live evidence pass and closure.
+
+### 2026-04-07 - Stage 9 Follow-up Start-of-Run (Residual Scheduling Fixes: Cache + Rollover Config)
+- Stage:
+  - Stage 9 - Add targeted refresh, failure handling, and hybrid UX clarity.
+- Plan for this run:
+  - Fix residual parse scheduling staleness by invalidating affected Anki card cache entries immediately after successful targeted review writes.
+  - Replace hardcoded rollover-hour behavior with configurable rollover hour from extension configuration.
+  - Keep changes scoped to scheduling logic only and avoid UI redesign.
+  - Verify with lint/build and add-on unit tests.
+- Prerequisite observations:
+  - P1 and both P2 fixes are complete and verified.
+  - Remaining residual findings are cache staleness after writes and non-configurable rollover alignment.
+- Risks/assumptions carried in:
+  - Risk: cache invalidation scope too broad could hurt parse performance; mitigation is targeted card-level invalidation.
+  - Assumption: configuration-level rollover alignment is acceptable for Stage 9 closure without adding new settings UI in this run.
+
+### 2026-04-07 - Stage 9 Review Audit (Post-P2 Scheduling Pass)
+- Completed:
+  - Performed additional scheduling-focused review after P1/P2 fixes.
+  - Identified residual risks related to parse-read cache staleness and rollover configurability boundaries.
+- Files reviewed:
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+- Files changed:
+  - `docs/implementation-working-log.md`
+- Verification status:
+  - Review-only pass; no runtime code changes in this audit.
+- Next recommended step:
+  - Address residual scheduling findings before Stage 9 closure sign-off.
+- Handoff:
+  - Resume with focused follow-up on residual audit findings.
+
+### 2026-04-07 - Stage 9 Follow-up Implementation (P2 Refresh-Freshness + Scheduler Rejection Robustness)
+- Completed:
+  - Fixed targeted refresh freshness semantics:
+    - Anki refresh now remains `stale` when targeted refresh cannot resolve selected target card state (`newCardState` empty with selected target), instead of incorrectly marking metadata `fresh`.
+  - Hardened add-on scheduler rejection mapping:
+    - replaced single brittle `'not at top of queue'` check with a classifier handling common non-reviewable scheduler messages (`top of queue`, `not due`, `suspend`, `buried`) and returning deterministic `CARD_NOT_REVIEWABLE` reasons.
+  - Added add-on unit test for not-due scheduler rejection classification.
+- Files changed:
+  - `src/background-worker/jiten-card-actions/update-card-state-command.handler.ts`
+  - `anki-addon/jiten_targeted_review/service.py`
+  - `anki-addon/tests/test_service.py`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Treat targeted refresh as authoritative only when concrete Anki state tags are returned; otherwise preserve stale freshness to avoid false confidence.
+  - Keep scheduler error classification conservative but broader than a single phrase; unknown scheduler errors still map to `APPLY_FAILED`.
+- Blockers / open issues:
+  - No active blocker for P2 fixes.
+  - Remaining Stage 9 closure item is live scenario evidence after these follow-ups.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+  - `py -3 -m unittest discover -s anki-addon/tests -p "test_*.py"` passes (`6` tests).
+- Next recommended step:
+  - Re-run live Stage 9 matrix:
+    - selected target success path (refreshing -> synced),
+    - ambiguous/no-target guard,
+    - scheduler non-reviewable cases (not due/top-of-queue) showing deterministic error semantics.
+- Handoff:
+  - Both requested P2 fixes are implemented and verified.
+  - Continue with live validation evidence and Stage 9 closure.
+
+### 2026-04-07 - Stage 9 Follow-up Start-of-Run (P2 Refresh-Freshness + Scheduler Rejection Robustness)
+- Stage:
+  - Stage 9 - Add targeted refresh, failure handling, and hybrid UX clarity.
+- Plan for this run:
+  - Fix P2 refresh-freshness bug so failed/empty Anki targeted refresh does not produce misleading `fresh` metadata.
+  - Fix P2 add-on scheduler rejection handling to classify non-reviewable scheduler errors more robustly than a single string match.
+  - Add/adjust unit tests for add-on error classification behavior.
+  - Verify with lint/build plus add-on unit tests.
+- Prerequisite observations:
+  - P1 rollover-aware due-day fix is complete and verified.
+  - Remaining known P2 issues are localized to update-card-state freshness and add-on scheduler exception mapping.
+- Risks/assumptions carried in:
+  - Risk: over-broad scheduler error mapping could misclassify real apply failures; mitigation is constrained phrase matching and explicit fallback to `APPLY_FAILED`.
+  - Assumption: targeted refresh with empty Anki state should remain stale/unknown until a successful refresh can be confirmed.
+
+### 2026-04-07 - Stage 9 Follow-up Implementation (P1 Rollover-Aware Due-Day Fix)
+- Completed:
+  - Implemented P1 due-day boundary fix for Anki review cards.
+  - Replaced midnight-anchored review-day comparison with rollover-aware day number calculation using Anki default rollover baseline (`4:00` local time).
+  - Kept learning/relearning due checks timestamp-based and unchanged.
+- Files changed:
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Use explicit local rollover-day anchoring (`4:00` default) for extension-side review due classification to better match Anki day boundaries than plain midnight.
+  - Keep scope limited to P1 without introducing new configuration keys/UI in this pass.
+- Blockers / open issues:
+  - No active blocker for this patch.
+  - Users with non-default Anki rollover settings may still require configurable rollover alignment in a future follow-up.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Re-parse/refresh the fixture and validate due labels around current time and near day-boundary windows.
+- Handoff:
+  - P1 fix is implemented and verified by lint/build.
+  - Continue with remaining Stage 9 closure validation and any additional scheduling follow-ups as needed.
+
+### 2026-04-07 - Stage 9 Follow-up Start-of-Run (P1 Rollover-Aware Due-Day Fix)
+- Stage:
+  - Stage 9 - Add targeted refresh, failure handling, and hybrid UX clarity.
+- Plan for this run:
+  - Implement P1 fix for due-day boundary accuracy by replacing browser-midnight day comparison with Anki-style rollover-aware day calculation.
+  - Keep patch scoped to Anki due-state read/mapping path only.
+  - Verify with lint/build and retain existing Stage 9 behavior for targeted refresh and ambiguity handling.
+- Prerequisite observations:
+  - Current due-day check is queue-aware but anchored to local midnight day boundary.
+  - No existing configuration key is present for Anki rollover hour; default behavior will be implemented explicitly in backend logic.
+- Risks/assumptions carried in:
+  - Assumption: Anki default rollover (4:00 local time) is the right baseline for extension-side due classification.
+  - Risk: users with custom rollover may still see boundary mismatch; mitigation deferred to a dedicated follow-up if needed.
+
+### 2026-04-07 - Stage 9 Review Audit (Anki Scheduling Logic)
+- Completed:
+  - Performed code-review-only audit of Anki scheduling-related logic across extension backend mapping/refresh and add-on write handler/runtime.
+  - Identified concrete follow-up risks/bugs with severity ranking and file/line references for remediation.
+- Files reviewed:
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+  - `src/background-worker/jiten-card-actions/update-card-state-command.handler.ts`
+  - `src/apps/popup/actions/grading-controller.ts`
+  - `anki-addon/jiten_targeted_review/service.py`
+  - `anki-addon/jiten_targeted_review/runtime.py`
+- Files changed:
+  - `docs/implementation-working-log.md`
+- Architectural notes:
+  - Current due-state model is now queue-aware, but still anchored to browser-local midnight rather than explicit Anki scheduler rollover semantics.
+- Verification status:
+  - Review-only pass; no runtime behavior changes made in this audit.
+- Next recommended step:
+  - Patch identified scheduling issues, then re-run fixture + live Anki acceptance checks around due-day boundary conditions and refresh-failure UX.
+- Handoff:
+  - Resume at Stage 9 follow-up bugfixes for review findings before closure.
+
+### 2026-04-07 - Stage 9 Follow-up Implementation (Anki Due-State Accuracy Fix)
+- Completed:
+  - Fixed Anki due-state derivation to avoid false-positive `due` labels on reviewed cards.
+  - Replaced queue-only due detection with queue-aware logic:
+    - review queue (`queue = 2`): due only when card `due` day is <= current local day.
+    - learning/relearning queues (`queue = 1/3`): due only when card `due` timestamp is <= current time.
+    - other queues: not due.
+  - Applied the same due logic in both parse-time mapping resolution and targeted refresh state reads.
+- Files changed:
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Use queue-specific interpretation of Anki `due` values to align UI due labels with scheduler semantics.
+- Blockers / open issues:
+  - No active code blocker.
+  - Final Stage 9 closure still requires live acceptance evidence across full scenario matrix.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Re-parse / refresh the Stage 7 mapping fixture and confirm previously reviewed future-due cards (e.g., `今日`) no longer show as due.
+- Handoff:
+  - Due-label accuracy fix is implemented and verified by lint/build.
+  - Continue Stage 9 live validation and closure evidence capture.
+
+### 2026-04-07 - Stage 9 Follow-up Start-of-Run (Anki Due-State Accuracy Fix)
+- Stage:
+  - Stage 9 - Add targeted refresh, failure handling, and hybrid UX clarity.
+- Plan for this run:
+  - Investigate why Anki-mapped terms remain marked `due` after same-day reviews.
+  - Trace current due-state derivation in Anki mapping and targeted refresh paths.
+  - Fix due-state logic so it reflects Anki scheduling accurately instead of queue-only heuristics.
+  - Verify with lint/build and preserve current Stage 9 ambiguity/fallback UX behavior.
+- Prerequisite observations:
+  - Live validation shows cards with future due dates can still display as due in extension UI.
+  - Current Anki due detection uses queue-based checks that may over-label review cards as due.
+- Risks/assumptions carried in:
+  - Risk: scheduler-field interpretation differences between queue types; mitigation is explicit queue-aware due checks.
+  - Assumption: `cardsInfo` response includes stable queue/due fields needed for queue-aware due determination.
+
+### 2026-04-07 - Stage 9 Follow-up Implementation (Ambiguous Target Submission Guard)
+- Completed:
+  - Added popup-side submission guard for Anki grading:
+    - block grade clicks when backend is `anki` but `targetState` is not `selected` or `ankiCardId` is missing.
+    - show explicit local error messaging for:
+      - ambiguous target (`multiple Anki targets found`)
+      - no selected target.
+  - Prevented avoidable backend round-trips that previously produced `MISSING_TARGET_CARD` errors for ambiguous cards.
+- Files changed:
+  - `src/apps/popup/actions/grading-controller.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Keep invalid Anki-target prevention at the interaction boundary (popup controller) for clearer UX and lower noise.
+  - Reserve backend `MISSING_TARGET_CARD` as a safety net, not normal user-path behavior.
+- Blockers / open issues:
+  - No active blocker.
+  - Stage 9 still needs final live acceptance evidence across success/fallback/failure scenarios.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Re-test the Stage 7 mapping fixture popup:
+    - ambiguous Anki target now should show local guard message and not attempt write submission.
+    - mapped selected target should continue through submit -> refresh flow.
+- Handoff:
+  - Follow-up UX guard is implemented and verified by lint/build.
+  - Continue with Stage 9 live scenario evidence and stage closure.
+
+### 2026-04-07 - Stage 9 Follow-up Start-of-Run (Ambiguous Target Grading Guard)
+- Stage:
+  - Stage 9 - Add targeted refresh, failure handling, and hybrid UX clarity.
+- Plan for this run:
+  - Reproduce and fix popup grading behavior when backend is Anki but target is not selected (`ambiguous`/`none`).
+  - Prevent invalid review submissions that currently surface `MISSING_TARGET_CARD`.
+  - Add explicit, user-facing guard messaging at click time to keep failures clear and non-misleading.
+  - Verify with lint/build and keep scope limited to Stage 9 UX coherence.
+- Prerequisite observations:
+  - Stage 9 core pass is implemented and verified, but live test shows grading buttons can still be clicked on ambiguous Anki targets.
+  - Current behavior relies on backend error (`MISSING_TARGET_CARD`) instead of preventing invalid interaction in popup.
+- Risks/assumptions carried in:
+  - Risk: over-restricting clicks could block valid flows; mitigation is to guard only Anki cards without `targetState: selected`.
+  - Assumption: cards in Jiten backend remain gradeable through existing behavior.
+
+### 2026-04-07 - Stage 9 Implementation (Targeted Refresh + Hybrid UX Clarity Pass)
+- Completed:
+  - Implemented targeted post-review refresh flow for successful Anki grade actions:
+    - popup grading path now marks metadata stale and requests immediate refresh for the same term with explicit `targetCardId` context
+    - refresh now runs through `UpdateCardStateCommand` with context payload, avoiding full-page reparse.
+  - Added interaction-boundary fallback clarity:
+    - when a click resolves to a different backend than the card’s prior backend metadata, popup now shows an explicit fallback toast message.
+  - Extended refresh pipeline to preserve Anki mapping metadata during targeted refresh:
+    - update-state handler now accepts previous metadata and target card context
+    - Anki refresh path retains mapping/target semantics while updating state freshness and due status.
+  - Implemented Anki targeted card refresh read:
+    - Anki backend now resolves state from explicit `cardsInfo([targetCardId])` for post-review refresh.
+  - Added popup backend status indicator:
+    - shows backend badge (`Anki`/`Jiten`) and review sync/target status (`synced`, `refreshing`, `ambiguous target`, `no target`, `backend unavailable`).
+  - Updated foreground registry metadata application to keep `card.reviewBackend` synchronized with refreshed metadata backend.
+- Files changed:
+  - `src/apps/popup/actions/grading-controller.ts`
+  - `src/apps/popup/actions/base-controller.ts`
+  - `src/shared/messages/background/update-card-state.command.ts`
+  - `src/background-worker/jiten-card-actions/update-card-state-command.handler.ts`
+  - `src/background-worker/review-backend/review-backend.types.ts`
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+  - `src/background-worker/review-backend/jiten-review-backend.ts`
+  - `src/apps/integration/registry.ts`
+  - `src/apps/popup/popup.ts`
+  - `src/styles/popup.scss`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Keep Stage 9 targeted refresh scoped to the interaction target (word ID/reading index + selected `ankiCardId`) instead of reparsing page content.
+  - Preserve previous Anki mapping metadata during post-write refresh so selected-target context is not dropped when state tags are sparse.
+  - Surface backend switching at interaction boundaries as explicit user feedback (toast) rather than implicit behavior changes.
+- Blockers / open issues:
+  - No active code blocker.
+  - Pending live extension + Anki validation to confirm UX behavior and refresh semantics across real unavailable/ambiguous scenarios.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Run live Stage 9 validation scenarios:
+    - successful Anki review click updates popup status from refreshing -> synced via targeted refresh
+    - Anki unavailable-at-click case shows explicit fallback message and backend badge clarity
+    - failure paths remain explicit and non-misleading.
+- Handoff:
+  - Stage 9 core implementation is in place and compiling cleanly.
+  - Next run should focus on live validation evidence and any small follow-up fixes needed for Stage 9 closure.
+
+### 2026-04-07 - Stage 9 Start-of-Run
+- Stage:
+  - Stage 9 - Add targeted refresh, failure handling, and hybrid UX clarity.
+- Plan for this run:
+  - Audit current post-review success path to identify where stale metadata is marked and where targeted refresh should execute.
+  - Implement targeted refresh for affected term/card state after successful review actions (without full-page reparse).
+  - Add explicit stale-state handling rules in popup interactions and ensure failure states remain user-visible and non-misleading.
+  - Surface active backend status clearly in popup UX with lightweight indicators.
+  - Enforce interaction-boundary fallback behavior (no silent backend switching mid-click).
+  - Verify with lint/build and focused flow checks.
+- Prerequisite observations:
+  - Stage 8B is complete and validated live for success plus explicit failure responses.
+  - Existing flow intentionally marks review metadata stale after successful Anki writes but does not yet perform targeted refresh.
+  - Backend selector infrastructure and status model already exist from prior stages and can support popup status visibility.
+- Risks/assumptions carried in:
+  - Risk: targeted refresh might over-refresh and regress performance; mitigation is narrow refresh scope to affected card/term identity.
+  - Risk: ambiguous fallback messaging could imply a write reached Anki when it did not; mitigation is explicit backend/result messaging and boundary-gated fallback only.
+  - Assumption: current Stage 7 selected-target metadata remains available at interaction time to anchor refresh and status updates.
+
 ### 2026-04-07 - Stage 8B Live Validation and Closure
 - Completed:
   - Validated startup routing fix in live Anki (`_jiten_targeted_review_handler_patched: true`) and eliminated `unsupported action` transport failures.

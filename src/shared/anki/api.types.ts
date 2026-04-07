@@ -96,6 +96,7 @@ export type AnkiRequestOptions = {
 
 export type AnkiEndpoints = {
   version: [Empty, number];
+  getCollectionCreationTime: [Empty, number];
   deckNames: [Empty, string[]];
   modelNames: [Empty, string[]];
   modelFieldNames: [ModelFieldNamesRequest, string[]];

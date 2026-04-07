@@ -684,7 +684,11 @@ export class Popup {
       createElement('div', {
         id: 'meta',
         class: 'subsection',
-        children: [this.getPitchAccentBlock(card), this.getFrequencyBlock(card)],
+        children: [
+          this.getPitchAccentBlock(card),
+          this.getFrequencyBlock(card),
+          this.getBackendStatusBlock(card),
+        ],
       }),
     );
   }
@@ -861,6 +865,35 @@ export class Popup {
     return createElement('div', {
       id: 'frequency',
       innerText: `#${frequencyRank}`,
+    });
+  }
+
+  private getBackendStatusBlock(card: JitenCard): HTMLDivElement {
+    const { backend, freshness, dueState, targetState } = card.reviewMetadata;
+    const backendLabel = backend === 'anki' ? 'Anki' : 'Jiten';
+
+    let statusLabel = freshness === 'stale' ? 'refreshing' : 'synced';
+
+    if (targetState === 'ambiguous') {
+      statusLabel = 'ambiguous target';
+    } else if (targetState === 'none' && backend === 'anki') {
+      statusLabel = 'no target';
+    } else if (dueState === 'unavailable') {
+      statusLabel = 'backend unavailable';
+    }
+
+    return createElement('div', {
+      id: 'backend-status',
+      children: [
+        createElement('span', {
+          class: ['backend', backend],
+          innerText: backendLabel,
+        }),
+        createElement('span', {
+          class: ['review-status', freshness === 'fresh' ? 'fresh' : 'stale'],
+          innerText: statusLabel,
+        }),
+      ],
     });
   }
 

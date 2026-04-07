@@ -3,6 +3,7 @@ import { cardsInfo } from '@shared/anki/cards-info';
 import { findNotes } from '@shared/anki/find-notes';
 import { findNotesMany } from '@shared/anki/find-notes-many';
 import { getApiVersion } from '@shared/anki/get-api-version';
+import { getCollectionCreationTime } from '@shared/anki/get-collection-creation-time';
 import { notesInfo } from '@shared/anki/notes-info';
 import { targetedReviewWrite } from '@shared/anki/targeted-review-write';
 import { DiscoverWordConfiguration } from '@shared/anki/types';
@@ -17,6 +18,7 @@ import { TargetedReviewWriteError, UnsupportedReviewOperationError } from './rev
 import {
   ReviewBackend,
   ReviewBackendCapabilities,
+  ReviewCardStateContext,
   ReviewGradeContext,
   ReviewBackendParseMetrics,
   ReviewDeck,
@@ -36,9 +38,13 @@ const FIND_NOTES_MULTI_BATCH_SIZE = 50;
 const FIND_NOTES_CONCURRENCY_LIMIT = 6;
 const NOTES_INFO_CONCURRENCY_LIMIT = 4;
 const CARDS_INFO_CONCURRENCY_LIMIT = 4;
-const ANKI_QUEUE_DUE_LEARNING = 1;
-const ANKI_QUEUE_DUE_REVIEW = 2;
-const ANKI_QUEUE_DUE_RELEARNING = 3;
+const ANKI_QUEUE_LEARNING = 1;
+const ANKI_QUEUE_REVIEW = 2;
+const ANKI_QUEUE_RELEARNING = 3;
+const ANKI_QUEUE_PREVIEW = 4;
+const ANKI_FALLBACK_ROLLOVER_HOUR = 4;
+const ROLLOVER_CACHE_TTL_MS = 30_000;
+const COLLECTION_CREATION_CACHE_TTL_MS = 300_000;
 const ELIGIBLE_TEMPLATE_ORDS = new Set<number>([0]);
 
 type AnkiTargetCandidate = {
@@ -105,8 +111,14 @@ export type AnkiParseLookupMetrics = {
 };
 
 export class AnkiReviewBackend implements ReviewBackend {
+  private _cachedCollectionCreatedAtExpiresAt = 0;
+  private _cachedCollectionCreatedAtMs?: number;
   private _cachedReadProbeExpiresAt = 0;
+  private _cachedRolloverHourExpiresAt = 0;
+  private _cachedRolloverHour = ANKI_FALLBACK_ROLLOVER_HOUR;
+  private _inFlightCollectionCreatedAtProbe?: Promise<number | undefined>;
   private _inFlightReadProbe?: Promise<void>;
+  private _inFlightRolloverProbe?: Promise<number>;
   private _lastParseMetrics?: AnkiParseLookupMetrics;
   private readonly _findNotesCache = new Map<string, CacheEntry<number[]>>();
   private readonly _notesInfoCache = new Map<number, CacheEntry<AnkiNoteInfo>>();
@@ -116,10 +128,25 @@ export class AnkiReviewBackend implements ReviewBackend {
     return ANKI_REVIEW_BACKEND_CAPABILITIES;
   }
 
+  public invalidateCaches(): void {
+    this._cachedReadProbeExpiresAt = 0;
+    this._cachedRolloverHourExpiresAt = 0;
+    this._cachedCollectionCreatedAtExpiresAt = 0;
+    this._cachedCollectionCreatedAtMs = undefined;
+    this._inFlightReadProbe = undefined;
+    this._inFlightRolloverProbe = undefined;
+    this._inFlightCollectionCreatedAtProbe = undefined;
+    this._findNotesCache.clear();
+    this._notesInfoCache.clear();
+    this._cardsInfoCache.clear();
+  }
+
   public async getParseReviewStates(
     vocabulary: JitenRawVocabulary[],
   ): Promise<ReviewTermResolutionMap> {
     await this.ensureReadOnlyPathReady();
+    await this.ensureRolloverHourLoaded();
+    await this.ensureCollectionCreatedAtLoaded();
 
     const readonlyConfigs = await getConfiguration('ankiReadonlyConfigs');
     const eligibleTargets = await this.getEligibleAnkiTargets(readonlyConfigs);
@@ -183,10 +210,30 @@ export class AnkiReviewBackend implements ReviewBackend {
     return this._lastParseMetrics;
   }
 
-  public async getCardState(_wordId: number, _readingIndex: number): Promise<JitenCardState[]> {
+  public async getCardState(
+    _wordId: number,
+    _readingIndex: number,
+    context?: ReviewCardStateContext,
+  ): Promise<JitenCardState[]> {
     await this.ensureReadOnlyPathReady();
+    await this.ensureRolloverHourLoaded();
+    await this.ensureCollectionCreatedAtLoaded();
 
-    return [];
+    const targetCardId = context?.targetCardId;
+
+    if (!targetCardId || targetCardId <= 0) {
+      return [];
+    }
+
+    const [targetCard] = await cardsInfo([targetCardId], { showToastOnError: false });
+
+    if (targetCard?.cardId !== targetCardId) {
+      return [];
+    }
+
+    const due = this.isCardDue(targetCard);
+
+    return due ? [JitenCardState.DUE, JitenCardState.YOUNG] : [JitenCardState.YOUNG];
   }
 
   public async gradeCard(
@@ -228,6 +275,8 @@ export class AnkiReviewBackend implements ReviewBackend {
         response.error.details,
       );
     }
+
+    this.invalidateCardStateCache(targetCardId);
   }
 
   public forgetCard(_wordId: number, _readingIndex: number): Promise<void> {
@@ -264,6 +313,85 @@ export class AnkiReviewBackend implements ReviewBackend {
     } finally {
       this._inFlightReadProbe = undefined;
     }
+  }
+
+  private async ensureRolloverHourLoaded(): Promise<void> {
+    const now = Date.now();
+
+    if (this._cachedRolloverHourExpiresAt > now) {
+      return;
+    }
+
+    if (!this._inFlightRolloverProbe) {
+      this._inFlightRolloverProbe = (async (): Promise<number> => {
+        const configuredRolloverHour = await getConfiguration('ankiRolloverHour');
+
+        if (
+          typeof configuredRolloverHour !== 'number' ||
+          !Number.isFinite(configuredRolloverHour)
+        ) {
+          return ANKI_FALLBACK_ROLLOVER_HOUR;
+        }
+
+        return Math.min(23, Math.max(0, Math.floor(configuredRolloverHour)));
+      })();
+    }
+
+    try {
+      this._cachedRolloverHour = await this._inFlightRolloverProbe;
+      this._cachedRolloverHourExpiresAt = now + ROLLOVER_CACHE_TTL_MS;
+    } finally {
+      this._inFlightRolloverProbe = undefined;
+    }
+  }
+
+  private async ensureCollectionCreatedAtLoaded(): Promise<void> {
+    const now = Date.now();
+
+    if (this._cachedCollectionCreatedAtExpiresAt > now) {
+      return;
+    }
+
+    if (!this._inFlightCollectionCreatedAtProbe) {
+      this._inFlightCollectionCreatedAtProbe = (async (): Promise<number | undefined> => {
+        const rawCreationTime = await getCollectionCreationTime({
+          showToastOnError: false,
+        });
+
+        return this.normaliseCollectionCreationTime(rawCreationTime);
+      })();
+    }
+
+    try {
+      const resolvedCreationTime = await this._inFlightCollectionCreatedAtProbe;
+
+      if (resolvedCreationTime === undefined) {
+        throw new Error(
+          'Anki scheduling context is unavailable (invalid collection creation time).',
+        );
+      }
+
+      this._cachedCollectionCreatedAtMs = resolvedCreationTime;
+      this._cachedCollectionCreatedAtExpiresAt = now + COLLECTION_CREATION_CACHE_TTL_MS;
+    } finally {
+      this._inFlightCollectionCreatedAtProbe = undefined;
+    }
+  }
+
+  private normaliseCollectionCreationTime(rawCreationTime: number): number | undefined {
+    if (!Number.isFinite(rawCreationTime) || rawCreationTime <= 0) {
+      return;
+    }
+
+    if (rawCreationTime >= 1_000_000_000_000) {
+      return Math.floor(rawCreationTime);
+    }
+
+    return Math.floor(rawCreationTime * 1000);
+  }
+
+  private invalidateCardStateCache(cardId: number): void {
+    this._cardsInfoCache.delete(cardId);
   }
 
   private getUniqueTermContexts(vocabulary: JitenRawVocabulary[]): Map<string, TermContext> {
@@ -633,7 +761,7 @@ export class AnkiReviewBackend implements ReviewBackend {
             continue;
           }
 
-          const due = this.isCardDue(card.queue);
+          const due = this.isCardDue(card);
           const candidate: AnkiTargetCandidate = {
             target: {
               key: `anki:${card.cardId}`,
@@ -790,11 +918,53 @@ export class AnkiReviewBackend implements ReviewBackend {
     );
   }
 
-  private isCardDue(queue: number): boolean {
-    return (
-      queue === ANKI_QUEUE_DUE_LEARNING ||
-      queue === ANKI_QUEUE_DUE_REVIEW ||
-      queue === ANKI_QUEUE_DUE_RELEARNING
+  private isCardDue(card: Pick<AnkiCardInfo, 'queue' | 'due'>): boolean {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const ankiCollectionDayNumber = this.getAnkiCurrentCollectionDayNumber();
+
+    if (card.queue === ANKI_QUEUE_REVIEW || card.queue === ANKI_QUEUE_RELEARNING) {
+      if (ankiCollectionDayNumber === undefined) {
+        throw new Error('Anki scheduling context is unavailable (missing collection day).');
+      }
+
+      return card.due <= ankiCollectionDayNumber;
+    }
+
+    if (card.queue === ANKI_QUEUE_LEARNING || card.queue === ANKI_QUEUE_PREVIEW) {
+      return card.due <= nowSeconds;
+    }
+
+    return false;
+  }
+
+  private getAnkiCurrentCollectionDayNumber(): number | undefined {
+    if (this._cachedCollectionCreatedAtMs === undefined) {
+      return;
+    }
+
+    const nowAnchor = this.getAnkiDayAnchor(new Date());
+    const collectionAnchor = this.getAnkiDayAnchor(new Date(this._cachedCollectionCreatedAtMs));
+    const nowEpochDay = this.getEpochDayNumber(nowAnchor);
+    const collectionEpochDay = this.getEpochDayNumber(collectionAnchor);
+
+    return Math.max(0, nowEpochDay - collectionEpochDay);
+  }
+
+  private getAnkiDayAnchor(date: Date): Date {
+    const ankiDayAnchor = new Date(date);
+
+    if (date.getHours() < this._cachedRolloverHour) {
+      ankiDayAnchor.setDate(ankiDayAnchor.getDate() - 1);
+    }
+
+    ankiDayAnchor.setHours(0, 0, 0, 0);
+
+    return ankiDayAnchor;
+  }
+
+  private getEpochDayNumber(anchor: Date): number {
+    return Math.floor(
+      Date.UTC(anchor.getFullYear(), anchor.getMonth(), anchor.getDate()) / 86_400_000,
     );
   }
 

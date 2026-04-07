@@ -88,10 +88,12 @@ onBroadcastMessage('profileSwitched', () => {
   invalidateProfileCache();
   invalidateSetConfigurationCache();
   reviewBackendSelector.invalidateAvailabilityCache();
+  ankiReviewBackend.invalidateCaches();
 });
 
 onBroadcastMessage('configurationUpdated', async () => {
   reviewBackendSelector.invalidateAvailabilityCache();
+  ankiReviewBackend.invalidateCaches();
   const tabIds = getStyledTabIds();
 
   for (const tabId of tabIds) {

@@ -67,6 +67,7 @@ export class Registry {
     }
 
     card.cardState = state;
+    card.reviewBackend = reviewMetadata.backend;
     card.reviewMetadata = reviewMetadata;
 
     document

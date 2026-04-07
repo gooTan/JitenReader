@@ -2,6 +2,7 @@ import {
   JitenCardState,
   JitenRating,
   JitenRawVocabulary,
+  ReviewMetadata,
   ReviewDueState,
   ReviewMappingState,
   ReviewTargetMetadata,
@@ -29,6 +30,10 @@ export type ReviewGradeContext = {
   requestId?: string;
   targetCardId?: number;
 };
+export type ReviewCardStateContext = {
+  targetCardId?: number;
+  previousMetadata?: ReviewMetadata;
+};
 
 export interface ReviewBackend {
   getCapabilities(): ReviewBackendCapabilities;
@@ -40,7 +45,11 @@ export interface ReviewBackend {
     rating: JitenRating,
     context?: ReviewGradeContext,
   ): Promise<void>;
-  getCardState(wordId: number, readingIndex: number): Promise<JitenCardState[]>;
+  getCardState(
+    wordId: number,
+    readingIndex: number,
+    context?: ReviewCardStateContext,
+  ): Promise<JitenCardState[]>;
   forgetCard(wordId: number, readingIndex: number): Promise<void>;
   runDeckAction(
     wordId: number,
