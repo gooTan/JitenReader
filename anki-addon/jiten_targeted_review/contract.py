@@ -30,12 +30,16 @@ class RequestValidationError(ValueError):
         self.details = details
 
 
+def _is_strict_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def parse_request(payload: Any) -> TargetedReviewRequest:
     if not isinstance(payload, Mapping):
         raise RequestValidationError('INVALID_REQUEST', 'Payload must be an object.')
 
     version = payload.get('version')
-    if not isinstance(version, int):
+    if not _is_strict_int(version):
         raise RequestValidationError('INVALID_REQUEST', 'Field "version" must be an integer.')
 
     if version != SUPPORTED_VERSION:
@@ -46,7 +50,7 @@ def parse_request(payload: Any) -> TargetedReviewRequest:
         )
 
     card_id = payload.get('cardId')
-    if not isinstance(card_id, int) or card_id <= 0:
+    if not _is_strict_int(card_id) or card_id <= 0:
         raise RequestValidationError('INVALID_CARD_ID', 'Field "cardId" must be a positive integer.', {'cardId': card_id})
 
     rating = payload.get('rating')
@@ -105,4 +109,3 @@ def error_response(
     if error.details is not None:
         response['error']['details'] = dict(error.details)
     return response
-

@@ -111,6 +111,33 @@ class TargetedReviewServiceTests(unittest.TestCase):
         self.assertFalse(response['success'])
         self.assertEqual(response['error']['code'], 'INVALID_RATING')
 
+    def test_bool_values_are_rejected_for_integer_fields(self) -> None:
+        runtime = FakeRuntime({})
+
+        response_with_bool_version = handle_request(
+            {
+                'version': True,
+                'cardId': 1001,
+                'rating': 'good',
+            },
+            runtime,
+        )
+        self.assertFalse(response_with_bool_version['success'])
+        self.assertEqual(response_with_bool_version['error']['code'], 'INVALID_REQUEST')
+        self.assertEqual(response_with_bool_version['version'], 1)
+        self.assertIsInstance(response_with_bool_version['version'], int)
+
+        response_with_bool_card_id = handle_request(
+            {
+                'version': 1,
+                'cardId': True,
+                'rating': 'good',
+            },
+            runtime,
+        )
+        self.assertFalse(response_with_bool_card_id['success'])
+        self.assertEqual(response_with_bool_card_id['error']['code'], 'INVALID_CARD_ID')
+
     def test_card_not_found(self) -> None:
         runtime = FakeRuntime({})
         response = handle_request(

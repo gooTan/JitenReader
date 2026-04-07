@@ -6,6 +6,7 @@ from typing import Any, Protocol
 from .contract import (
     ErrorPayload,
     RequestValidationError,
+    SUPPORTED_VERSION,
     TargetedReviewRequest,
     error_response,
     parse_request,
@@ -106,9 +107,20 @@ def _snapshot(card: CardProtocol, rating: str, ease: int, deck_name: str) -> dic
     }
 
 
+def _extract_error_version(payload: Any) -> int:
+    if not isinstance(payload, dict):
+        return SUPPORTED_VERSION
+
+    version = payload.get('version')
+    if isinstance(version, bool) or not isinstance(version, int):
+        return SUPPORTED_VERSION
+
+    return version
+
+
 def handle_request(payload: Any, runtime: AnkiRuntime) -> dict[str, Any]:
     request_id = payload.get('requestId') if isinstance(payload, dict) else None
-    version = payload.get('version') if isinstance(payload, dict) and isinstance(payload.get('version'), int) else 1
+    version = _extract_error_version(payload)
 
     try:
         request = parse_request(payload)

@@ -128,6 +128,88 @@
 - Next run should begin at the next planned stage with standard preflight.
 
 ## Run History
+### 2026-04-07 - Stage 9 Follow-up Implementation (Addon Registration Bootstrap Robustness Hardening)
+- Completed:
+  - Hardened add-on bootstrap convergence behavior so partial success no longer stops retry flow.
+  - Updated bootstrap exit condition to return early only when both paths are ready:
+    - action registration completed
+    - handler patch completed
+  - Kept bounded retry behavior and explicit cap intact.
+  - Applied the same convergence rule in both add-on entry modules to avoid drift.
+- Files changed:
+  - `anki-addon/__init__.py`
+  - `anki-addon/jiten_targeted_review/__init__.py`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Treat action registration and handler patch as independent integration requirements during startup and require convergence before stopping retries.
+  - Preserve bounded retries so startup cannot loop indefinitely when one path remains unavailable.
+- Blockers / open issues:
+  - No active blocker.
+- Verification status:
+  - `py -3 -m unittest discover -s anki-addon/tests -p "test_*.py"` passes (`7` tests).
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Live-check startup in Anki with delayed AnkiConnect availability to confirm both registration paths converge under late initialisation conditions.
+- Handoff:
+  - Requested robust fix for remaining add-on audit issue is implemented and verified.
+  - Bootstrap no longer terminates on partial success.
+
+### 2026-04-07 - Stage 9 Follow-up Start-of-Run (Addon Registration Bootstrap Robustness Hardening)
+- Stage:
+  - Stage 9 - Add targeted refresh, failure handling, and hybrid UX clarity.
+- Plan for this run:
+  - Fix add-on bootstrap registration flow so retries are not stopped by partial success (action-registered but handler-not-patched, or vice versa).
+  - Require both registration paths to converge before early return, with safe bounded retry behavior when one path is delayed.
+  - Keep patch focused on add-on startup wiring only.
+  - Verify with add-on tests plus extension lint/build.
+- Prerequisite observations:
+  - Current bootstrap stops when either action registration or handler patch succeeds.
+  - This can leave one integration path unset in late-initialisation scenarios.
+- Risks/assumptions carried in:
+  - Assumption: both action registration and handler patch should be attempted until both are ready or retry budget is exhausted.
+  - Risk: additional retries during startup; acceptable and bounded by existing attempt cap.
+
+### 2026-04-07 - Stage 9 Follow-up Implementation (Addon Strict Integer Validation Hardening)
+- Completed:
+  - Fixed add-on payload validation to reject boolean values for integer contract fields.
+  - Added strict integer helper in contract validation and applied it to:
+    - `version`
+    - `cardId`
+  - Added unit coverage asserting bool rejection for both fields with deterministic error codes.
+- Files changed:
+  - `anki-addon/jiten_targeted_review/contract.py`
+  - `anki-addon/tests/test_service.py`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Treat Python `bool` as invalid for integer contract fields even though `bool` subclasses `int`, to preserve strict wire-contract semantics.
+- Blockers / open issues:
+  - No active blocker.
+- Verification status:
+  - `py -3 -m unittest discover -s anki-addon/tests -p "test_*.py"` passes (`7` tests).
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Continue add-on hardening for the remaining audit item if requested (registration bootstrap partial-success resilience).
+- Handoff:
+  - Requested add-on bugfix is implemented and verified.
+  - Bool-to-int coercion path is now blocked at contract boundary.
+
+### 2026-04-07 - Stage 9 Follow-up Start-of-Run (Addon Strict Integer Validation Hardening)
+- Stage:
+  - Stage 9 - Add targeted refresh, failure handling, and hybrid UX clarity.
+- Plan for this run:
+  - Fix add-on request validation so boolean values are rejected for integer fields (`version`, `cardId`).
+  - Add focused unit coverage for bool-rejection behavior to prevent regression.
+  - Keep patch scoped to add-on contract validation only.
+  - Verify with add-on unit tests and extension lint/build checks.
+- Prerequisite observations:
+  - Add-on audit found `isinstance(value, int)` currently allows Python booleans through integer checks.
+  - This can route malformed requests into scheduler flow unexpectedly.
+- Risks/assumptions carried in:
+  - Assumption: strict integer validation should treat bool as invalid even though `bool` is a subclass of `int` in Python.
+  - Risk: none significant; behavior aligns with documented contract constraints.
+
 ### 2026-04-07 - Stage 9 Follow-up Implementation (P3 Cache Boundary Invalidation Hardening)
 - Completed:
   - Added explicit Anki backend cache reset API to clear all cached scheduling/mapping context on demand.
@@ -1557,3 +1639,52 @@
   - `docs/implementation-working-log.md`
 - Verification status:
   - Stage 8A live validation now covers both `good` and `again` success paths under FSRS plus explicit error cases.
+
+### 2026-04-07 - Stage 9 Follow-up Start-of-Run (Robust P2 Fixes: Error-Version Strictness + Not-Found Normalization)
+- Stage:
+  - Stage 9 - Add targeted refresh, failure handling, and hybrid UX clarity.
+- Plan for this run:
+  - Fix addon error-response ersion derivation so invalid bool ersion does not leak into response payloads.
+  - Harden runtime card-not-found normalization to avoid brittle single-substring matching and keep deterministic CARD_NOT_FOUND behavior.
+  - Add regression tests for both fixes and verify with addon unit tests plus lint/build.
+- Prerequisite observations:
+  - Stage 9 remains current and prior scheduling hardening is already merged.
+  - Reaudit identified two remaining P2 robustness gaps in addon scheduling/write path.
+- Risks/assumptions carried in:
+  - Assumption: contract/error response should keep version numerically stable even when request validation fails.
+  - Risk: overly broad not-found detection could hide non-not-found runtime errors; mitigation is pattern-based normalization plus defensive fallback behavior.
+
+### 2026-04-07 - Stage 9 Follow-up Implementation (Robust P2 Fixes: Error-Version Strictness + Not-Found Normalization)
+- Completed:
+  - Hardened add-on error-response version derivation so invalid boolean ersion values no longer leak into response payloads.
+  - Added explicit _extract_error_version guard in service layer to keep validation-error responses contract-stable.
+  - Hardened runtime card lookup normalization using DB-backed card existence checks (cards table) before scheduler/runtime retrieval.
+  - Added controlled fallback missing-card classification only when DB probe is unavailable, preserving deterministic CARD_NOT_FOUND behavior while avoiding brittle single-substring dependence.
+  - Added regression tests for:
+    - bool ersion response-version normalization
+    - DB-backed missing-card handling
+    - fallback missing-card message handling when DB probe is unavailable
+    - propagation of unexpected runtime errors when card exists.
+- Files changed:
+  - nki-addon/jiten_targeted_review/service.py
+  - nki-addon/jiten_targeted_review/runtime.py
+  - nki-addon/tests/test_service.py
+  - nki-addon/tests/test_runtime.py
+  - docs/implementation-working-log.md
+- Architectural decisions made:
+  - Error responses should use a strictly normalized numeric version baseline (SUPPORTED_VERSION) when incoming ersion is invalid, including bool values.
+  - Prefer deterministic existence checks via collection DB over localized/variable runtime error strings for not-found normalization.
+  - Preserve transparency by re-raising non-not-found runtime failures when card existence is confirmed.
+- Blockers / open issues:
+  - No active blocker.
+- Verification status:
+  - py -3 -m unittest discover -s anki-addon/tests -p "test_*.py" passes (10 tests).
+  - 
+pm run lint passes.
+  - 
+pm run build passes.
+- Next recommended step:
+  - Live-check in Anki with a non-existent card ID and a valid existing card to confirm deterministic CARD_NOT_FOUND vs non-masked runtime failures in real runtime conditions.
+- Handoff:
+  - Both requested robust P2 fixes are implemented and verified.
+  - Next run can continue with fresh audit/passive monitoring unless new live-runtime edge cases are observed.

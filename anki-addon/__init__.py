@@ -126,10 +126,12 @@ def _bootstrap_registration(attempt: int = 0) -> None:
     action_registered = _register_action_with_anki_connect()
     handler_patched = _patch_anki_connect_handler()
 
-    if action_registered or handler_patched:
+    if action_registered and handler_patched:
         return
 
     if attempt >= 240:
+        # If one integration path is still unavailable after bounded retries,
+        # keep whichever successful path we have and stop retrying.
         return
 
     QTimer.singleShot(250, lambda: _bootstrap_registration(attempt + 1))
