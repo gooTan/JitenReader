@@ -1,10 +1,10 @@
 # Implementation Working Log
 
 ## Current Snapshot
-- Current stage: Stage 7B - Optimize Anki Mapping Parse Performance
-- Overall status: Stage 7B complete. Parse-time Anki mapping is now batched and near-parity with Jiten-only parse latency on the Stage 7B fixture page.
+- Current stage: Stage 8A - Build the Anki Add-on
+- Overall status: Stage 8A implementation pass complete in-repo with standalone add-on scaffold, contract, handler, and unit tests. Live-Anki runtime verification remains pending.
 - Active backend behavior: Anki read-path uses deduplicated term/config planning, batched `findNotes` via AnkiConnect `multi`, shared `notesInfo`/`cardsInfo` hydration, short-lived caches, and fallback to single-query lookup when batched mode fails.
-- Last updated: 2026-04-07 10:18:00 +10:00
+- Last updated: 2026-04-07 14:40:00 +10:00
 
 ## Architectural Decisions
 ### Decision: Keep Stage 0 output documentation-only
@@ -71,9 +71,9 @@
   - No source/runtime behavior files in `src/` were modified.
 
 ## In Progress
-- Task: None.
-- Current status: Stage 7B closed.
-- Next immediate step: Begin Stage 8 preflight when requested.
+- Task: Stage 8A closure and handoff.
+- Current status: Stage 8A implementation complete; awaiting Stage 8B integration work in extension.
+- Next immediate step: Begin Stage 8B preflight and wire extension write-path to add-on contract.
 
 ## Open Tasks
 - [x] Trace page parsing and enrichment ownership in content scripts and background worker.
@@ -88,7 +88,8 @@
 
 ## Known Issues / Blockers
 - The path `docs/stages/stage-0-codebase-reconnaissance-and-architecture-map.md` is not present; canonical file is `docs/stages/stage_0_codebase_reconnaissance_and_architecture_map.md`.
-- No active blocker for current Stage 7 implementation.
+- No active blocker for Stage 8A implementation.
+- Verification gap: targeted review write handler is unit-tested with fake runtime but not yet smoke-tested inside a live Anki session.
 
 ## Verification Status
 - Verified:
@@ -122,9 +123,9 @@
 - The next model instance should start by reading this log, then:
   - `docs/stage_execution_protocol.md`
   - next target stage document in `docs/stages/`
-  - `docs/stages/stage_6_implement_anki_read_only_backend_shell.md`
-- Resume at the next stage only; do not reopen Stage 6 unless regressions are found.
-- Stage 7 is now complete (including manual live-Anki validation and highlighting regression hardening).
+  - `docs/stages/stage_8B_Integrate_JitenReader_with_the_Anki_Addon.md`
+- Resume at Stage 8B only; do not reopen Stage 8A unless live-Anki validation reveals add-on defects.
+- Stage 8A add-on contract and handler are now in place for integration.
 
 ## Run History
 ### 2026-04-07 - Stage 7B Closure (Performance Acceptance + Handoff)
@@ -817,3 +818,135 @@
   - Start Stage 2 preflight and maintain Stage 1 abstraction seam as baseline.
 - Handoff:
   - Stage 1 is closed. Next run should treat this stage as complete and avoid reopening unless regressions are found.
+
+### 2026-04-07 - Stage 8A Start-of-Run
+- Stage:
+  - Stage 8A - Build the Anki add-on.
+- Plan for this run:
+  - Create a separate `anki-addon/` subproject with clear setup and usage documentation.
+  - Define a versioned request/response contract for targeted review writes against explicit Anki card IDs.
+  - Implement an Anki add-on endpoint/handler that validates payloads, validates target card/reviewability, applies Again/Hard/Good/Easy semantics to the exact target card, and returns structured success/failure plus authoritative post-review card state.
+  - Add minimal independent verification notes/tests for core handler behavior.
+- Prerequisite observations:
+  - Master log indicates Stage 7B is complete and accepted; next recommended step is Stage 8 preflight.
+  - Stage 8A scope is Anki-side only and explicitly excludes extension integration/UI work.
+  - Existing extension-side Anki plumbing can remain untouched in this stage.
+- Risks/assumptions carried in:
+  - Risk: Anki scheduler internals differ across supported Anki versions; mitigation is to isolate scheduler interactions behind a small adapter and document version assumptions.
+  - Risk: ambiguous reviewability semantics for suspended/buried/new states; mitigation is explicit validation and deterministic typed errors.
+  - Assumption: add-on transport is provided via AnkiConnect custom action endpoint from the extension side in later stages; this stage focuses on add-on handler and contract stability.
+
+### 2026-04-07 - Stage 8A Implementation (Anki Add-on Targeted Review Write Handler)
+- Completed:
+  - Created a new standalone `anki-addon/` subproject for Anki-side targeted review writes.
+  - Added a versioned Stage 8A contract (`v1`) for exact-card review submissions with explicit success/error payloads.
+  - Implemented add-on request handling entrypoint (`jitenTargetedReviewWriteV1`) and registration helper.
+  - Implemented strict payload validation (version, card ID, rating, request ID) with deterministic typed errors.
+  - Implemented exact-card review application flow:
+    - load target card by `cardId`
+    - validate reviewability (explicit suspended/buried handling)
+    - apply Again/Hard/Good/Easy via scheduler ease mapping (1..4)
+    - reload card and return authoritative post-review card/deck/review-state fields.
+  - Added isolated unit tests covering success path and invalid/failure cases.
+  - Added add-on documentation and setup notes (`README`, `CONTRACT`, local `AGENTS`).
+- Files changed:
+  - `anki-addon/__init__.py`
+  - `anki-addon/AGENTS.md`
+  - `anki-addon/README.md`
+  - `anki-addon/CONTRACT.md`
+  - `anki-addon/jiten_targeted_review/__init__.py`
+  - `anki-addon/jiten_targeted_review/contract.py`
+  - `anki-addon/jiten_targeted_review/service.py`
+  - `anki-addon/jiten_targeted_review/runtime.py`
+  - `anki-addon/jiten_targeted_review/entrypoint.py`
+  - `anki-addon/tests/test_service.py`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Keep Stage 8A isolated as an Anki-only component under `anki-addon/`, separate from extension build/runtime files.
+  - Keep API surface narrow and versioned (`version: 1`, explicit action name) to support future compatibility-safe evolution.
+  - Use deterministic error codes instead of fallback behavior to keep extension-side write handling explicit in Stage 8B.
+  - Isolate Anki collection/scheduler calls in a runtime adapter to enable independent unit testing without Anki process dependencies.
+- Blockers / open issues:
+  - No active implementation blocker.
+  - Live-Anki smoke validation of the add-on handler is still pending (unit-level verification only in this run).
+- Verification status:
+  - `py -3 -m unittest discover -s anki-addon/tests -p "test_*.py"` passes (`5` tests).
+  - Validation covered: payload contract errors, card-not-found, non-reviewable card, apply failure, and success response payload.
+- Next recommended step:
+  - Begin Stage 8B and integrate extension-side Anki review submission with `jitenTargetedReviewWriteV1`, then run end-to-end live-Anki verification.
+- Handoff:
+  - Stage 8A implementation artifacts are complete and documented in `anki-addon/`.
+  - Next run should perform Stage 8B preflight, consume `anki-addon/CONTRACT.md`, and wire extension write-path + response handling.
+
+### 2026-04-07 - Stage 8A Live-Validation Follow-up (Missing Card Error Normalization)
+- Completed:
+  - Reproduced live-Anki edge case where invalid card IDs returned `INTERNAL_ERROR` instead of deterministic `CARD_NOT_FOUND`.
+  - Patched Anki runtime adapter card lookup to normalize Anki `No such card` exceptions into `None` so service-level error mapping returns `CARD_NOT_FOUND`.
+- Files changed:
+  - `anki-addon/jiten_targeted_review/runtime.py`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Keep card-not-found normalization in runtime adapter so service logic remains transport/runtime-agnostic and deterministic.
+- Blockers / open issues:
+  - No active blocker.
+  - Remaining live verification step: execute success-path test against a reviewable (non-suspended/non-buried) card.
+- Verification status:
+  - `py -3 -m unittest discover -s anki-addon/tests -p "test_*.py"` passes (`5` tests).
+- Next recommended step:
+  - Re-run debug-console checks with a reviewable card query and confirm success response plus card-state mutation.
+- Handoff:
+  - Invalid-card path now returns deterministic `CARD_NOT_FOUND`; resume with live success-path validation.
+
+### 2026-04-07 - Stage 8A Live-Validation Follow-up (Scheduler Timer Initialisation)
+- Completed:
+  - Investigated live-Anki `APPLY_FAILED` on reviewable card with error `unsupported operand type(s) for -: 'float' and 'NoneType'`.
+  - Patched runtime answer path to call `card.start_timer()` before `sched.answerCard(card, ease)` when available.
+- Files changed:
+  - `anki-addon/jiten_targeted_review/runtime.py`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Keep reviewer-like timer initialisation in runtime adapter, preserving service contract and deterministic error behavior.
+- Blockers / open issues:
+  - No active blocker; needs live retest in Anki to confirm success-path write completion.
+- Verification status:
+  - `py -3 -m unittest discover -s anki-addon/tests -p "test_*.py"` passes (`5` tests).
+- Next recommended step:
+  - Re-run live debug-console write on a reviewable card and confirm `success: true` plus changed post-review counters.
+- Handoff:
+  - Missing-card and timer-state issues are now addressed in adapter; validate live success path next.
+
+### 2026-04-07 - Stage 8A Live-Anki Success Validation and Closure
+- Completed:
+  - Verified successful targeted review write in live Anki against `Kaishi 1.5k` using a reviewable card.
+  - Observed successful response payload from `jitenTargetedReviewWriteV1` including authoritative post-review fields (`cardId`, `noteId`, `deckName`, `rating`, `ease`, `reviewState`, `queue`, `type`, `due`, `interval`, `reps`, `lapses`).
+  - Confirmed card mutation after write (`reps` incremented from `3` to `4`, `interval` updated from `242` to `656`).
+  - Removed deprecated explicit collection save call from runtime adapter (`save() is deprecated: saving is automatic`).
+- Files changed:
+  - `anki-addon/jiten_targeted_review/runtime.py`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Trust Anki automatic persistence after scheduler answer and avoid deprecated explicit save invocation.
+- Blockers / open issues:
+  - No active blocker for Stage 8A.
+- Verification status:
+  - Live-Anki success path validated by operator in debug console.
+  - Deterministic error paths validated live (`CARD_NOT_REVIEWABLE`, `INVALID_RATING`, `CARD_NOT_FOUND`).
+  - `py -3 -m unittest discover -s anki-addon/tests -p "test_*.py"` passes (`5` tests).
+- Next recommended step:
+  - Begin Stage 8B preflight and integrate extension-side Anki review submission with the Stage 8A add-on contract.
+- Handoff:
+  - Stage 8A is complete and verified (unit + live Anki).
+  - Next run should start at Stage 8B and consume `anki-addon/CONTRACT.md` for integration.
+
+### 2026-04-07 - Stage 8A Additional Live Validation (FSRS Again Path)
+- Completed:
+  - Ran a live targeted write with `rating: again` against a reviewable `Kaishi 1.5k` card while Anki FSRS is enabled.
+  - Confirmed successful response and expected scheduler transition:
+    - `reps: 4 -> 5`
+    - `lapses: 0 -> 1`
+    - `queue: 2 -> 1` (review -> learning)
+    - `interval: 656 -> 44`
+- Files changed:
+  - `docs/implementation-working-log.md`
+- Verification status:
+  - Stage 8A live validation now covers both `good` and `again` success paths under FSRS plus explicit error cases.
