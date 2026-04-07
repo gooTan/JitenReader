@@ -10,6 +10,11 @@ export type ReviewBackendStatus = {
   availability: Record<ReviewBackendId, ReviewBackendAvailability>;
 };
 
+export type ReviewBackendSelectionSnapshot = {
+  status: ReviewBackendStatus;
+  backend: ReviewBackend;
+};
+
 export type ReviewBackendRegistry = {
   jiten: ReviewBackend;
   anki?: ReviewBackend;

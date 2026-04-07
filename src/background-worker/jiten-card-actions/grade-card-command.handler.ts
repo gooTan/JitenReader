@@ -20,8 +20,8 @@ export class GradeCardCommandHandler extends BackgroundCommandHandler<GradeCardC
     rating: JitenRating,
     targetCardId?: number,
   ): Promise<GradeCardCommandResult> {
-    const backendStatus = await this._reviewBackendSelector.getStatus();
-    const reviewBackend = await this._reviewBackendSelector.getActiveBackend();
+    const { status: backendStatus, backend: reviewBackend } =
+      await this._reviewBackendSelector.getSelectionSnapshot();
 
     try {
       await reviewBackend.gradeCard(wordId, readingIndex, rating, {

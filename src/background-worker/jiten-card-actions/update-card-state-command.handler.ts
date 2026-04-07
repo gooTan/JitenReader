@@ -20,8 +20,9 @@ export class UpdateCardStateCommandHandler extends BackgroundCommandHandler<Upda
     targetCardId?: number,
     previousMetadata?: ReviewMetadata,
   ): Promise<void> {
-    let backendStatus = await this._reviewBackendSelector.getStatus();
-    let reviewBackend = await this._reviewBackendSelector.getActiveBackend();
+    const selection = await this._reviewBackendSelector.getSelectionSnapshot();
+    let backendStatus = selection.status;
+    let reviewBackend = selection.backend;
     let newCardState: JitenCardState[];
 
     try {

@@ -2,6 +2,7 @@ import { getConfiguration } from '@shared/configuration/get-configuration';
 import {
   ReviewBackendAvailability,
   ReviewBackendAvailabilityProbes,
+  ReviewBackendSelectionSnapshot,
   ReviewBackendId,
   ReviewBackendRegistry,
   ReviewBackendStatus,
@@ -56,9 +57,16 @@ export class ReviewBackendSelector {
   }
 
   public async getActiveBackend(): Promise<ReviewBackend> {
-    const { activeBackend } = await this.getStatus();
+    const { backend } = await this.getSelectionSnapshot();
 
-    return this._backends[activeBackend] ?? this._backends.jiten;
+    return backend;
+  }
+
+  public async getSelectionSnapshot(): Promise<ReviewBackendSelectionSnapshot> {
+    const status = await this.getStatus();
+    const backend = this._backends[status.activeBackend] ?? this._backends.jiten;
+
+    return { status, backend };
   }
 
   public getBackend(id: ReviewBackendId): ReviewBackend | undefined {

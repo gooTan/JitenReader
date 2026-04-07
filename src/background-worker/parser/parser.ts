@@ -32,8 +32,8 @@ export class Parser {
     const { tokens, vocabulary } = await parse(paragraphs);
     const jitenParseMs = performance.now() - jitenParseStartedAt;
     const backendSelectionStartedAt = performance.now();
-    const backendStatus = await this.reviewBackendSelector.getStatus();
-    const activeBackend = await this.reviewBackendSelector.getActiveBackend();
+    const { status: backendStatus, backend: activeBackend } =
+      await this.reviewBackendSelector.getSelectionSnapshot();
     const backendSelectionMs = performance.now() - backendSelectionStartedAt;
     const reviewStateStartedAt = performance.now();
     const { effectiveBackendStatus, parseReviewStates, effectiveBackend } =

@@ -12,8 +12,8 @@ export class TextHighlighter extends BaseTextHighlighter {
 
   private static readonly CHUNK_SIZE = 40;
 
-  public override apply(): void {
-    void this.applyAsync();
+  public override apply(): Promise<void> {
+    return this.applyAsync();
   }
 
   /**
@@ -939,9 +939,15 @@ export class TextHighlighter extends BaseTextHighlighter {
   }
 
   private async patchFragmentedRubyTokensChunked(): Promise<void> {
-    const filtered = this.filterMap(this._tokenToFragmentsMap, (fragments) => fragments.length > 0);
+    const filtered = this.filterMap(this._tokenToFragmentsMap, (fragments, token) =>
+      this.areBoundariesExactMatch(token, fragments),
+    );
 
     await this.processInChunks(filtered, (token, fragments) => {
+      if (!this.areBoundariesExactMatch(token, fragments)) {
+        return;
+      }
+
       if (this.applyOnSharedParent(fragments, token)) {
         return;
       }

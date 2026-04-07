@@ -7,5 +7,5 @@ export abstract class BaseTextHighlighter {
     protected tokens: JitenToken[],
   ) {}
 
-  public abstract apply(): void;
+  public abstract apply(): Promise<void>;
 }

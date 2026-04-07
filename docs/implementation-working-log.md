@@ -1688,3 +1688,127 @@ pm run build passes.
 - Handoff:
   - Both requested robust P2 fixes are implemented and verified.
   - Next run can continue with fresh audit/passive monitoring unless new live-runtime edge cases are observed.
+
+### 2026-04-07 - Stage 9 Follow-up Start-of-Run (Atomic Backend Selection Snapshot Consistency)
+- Stage:
+  - Stage 9 - Add targeted refresh, failure handling, and hybrid UX clarity.
+- Plan for this run:
+  - Eliminate non-atomic backend selection reads that can cause execution/reporting metadata drift.
+  - Introduce a selector-level atomic snapshot API returning status + resolved backend from one selection decision.
+  - Refactor parse/grade/refresh paths to consume the snapshot so backend used for work and backend shown in metadata/result are consistent.
+  - Verify with lint/build.
+- Prerequisite observations:
+  - Reaudit identified a P1 consistency risk caused by separate getStatus() and getActiveBackend() calls.
+  - Stage 9 design rules require predictable fallback at interaction boundaries and non-misleading backend UX.
+- Risks/assumptions carried in:
+  - Assumption: a single-operation backend snapshot is the correct consistency boundary.
+  - Risk: API surface change in selector consumers; mitigated by adding snapshot API while preserving existing selector methods for compatibility.
+
+### 2026-04-07 - Stage 9 Follow-up Implementation (Atomic Backend Selection Snapshot Consistency)
+- Completed:
+  - Added an atomic backend selection snapshot API in `ReviewBackendSelector` that resolves backend status and executable backend from a single selection decision.
+  - Refactored parse-time backend selection to use one snapshot read, preventing status/backend drift during enrichment.
+  - Refactored review write handler (`gradeCard`) to use one snapshot for both execution backend and returned backend label.
+  - Refactored targeted refresh handler (`updateCardState`) to use one snapshot baseline before refresh/fallback handling.
+  - Preserved existing selector APIs (`getStatus`, `getActiveBackend`) for compatibility while routing `getActiveBackend` through the new snapshot path.
+- Files changed:
+  - `src/background-worker/review-backend/review-backend-selector.types.ts`
+  - `src/background-worker/review-backend/review-backend-selector.ts`
+  - `src/background-worker/parser/parser.ts`
+  - `src/background-worker/jiten-card-actions/grade-card-command.handler.ts`
+  - `src/background-worker/jiten-card-actions/update-card-state-command.handler.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Treat backend selection as an operation-level atomic snapshot boundary to ensure backend execution and backend metadata/reporting remain consistent.
+  - Keep fallback behavior explicit in handlers, but base all initial decisions on one snapshot per operation.
+- Blockers / open issues:
+  - No active blocker.
+- Verification status:
+  - `npm run lint:fix` applied formatting normalization.
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Continue with remaining audit fixes (highlighting chunked-boundary guard and async stats/timing consistency) in separate scoped passes.
+- Handoff:
+  - P1 backend consistency fix is implemented.
+  - Parse/grade/refresh now avoid split selector reads that could misreport backend source.
+
+### 2026-04-07 - Stage 9 Follow-up Start-of-Run (P2 Highlighting Boundary Guard Restoration)
+- Stage:
+  - Stage 9 - Add targeted refresh, failure handling, and hybrid UX clarity.
+- Plan for this run:
+  - Restore strict boundary gating in chunked fragmented-ruby token patching so only exact token/fragment boundary matches are patched.
+  - Add a defensive in-loop boundary check to prevent future regressions if filter predicates drift.
+  - Verify with lint/build.
+- Prerequisite observations:
+  - Reaudit found chunked fragmented-ruby patch path currently processes non-exact boundaries, unlike the original non-chunked logic.
+  - This can over-patch mismatched fragments and produce incorrect highlighting/class assignment.
+- Risks/assumptions carried in:
+  - Assumption: boundary exactness is a required invariant for fragmented-ruby patch application.
+  - Risk: stricter gating may leave more fragments in fallback paths; acceptable to preserve correctness over aggressive patching.
+
+### 2026-04-07 - Stage 9 Follow-up Implementation (P2 Highlighting Boundary Guard Restoration)
+- Completed:
+  - Restored exact-boundary gating in chunked fragmented-ruby token patch flow to match original non-chunked behavior.
+  - Added a defensive exact-boundary guard inside chunk processor to prevent future accidental over-patching if predicate logic drifts.
+  - This prevents fragmented-ruby patch logic from mutating mismatched token/fragment spans.
+- Files changed:
+  - `src/apps/text-highlighter/text-highlighter.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Preserve boundary exactness as an invariant for fragmented-ruby patch application.
+  - Prefer conservative/fallback handling on non-exact matches over aggressive patching that can corrupt highlighting state.
+- Blockers / open issues:
+  - No active blocker.
+- Verification status:
+  - `npm run lint:fix` applied formatting normalization.
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Address remaining scheduling/highlighting audit item for async stats timing consistency if desired.
+- Handoff:
+  - Requested robust fix for issue 2 is implemented.
+  - Chunked fragmented-ruby patching now enforces exact-boundary behavior consistently.
+
+### 2026-04-07 - Stage 9 Follow-up Start-of-Run (P2 Highlight/Stats Completion Synchronization)
+- Stage:
+  - Stage 9 - Add targeted refresh, failure handling, and hybrid UX clarity.
+- Plan for this run:
+  - Remove fixed-delay status-bar recalculation timing from token application path.
+  - Make highlight application completion explicit so stats refresh occurs after highlighting/card registration is fully applied.
+  - Wire batch controller to await async apply functions for deterministic sequencing.
+  - Verify with lint/build.
+- Prerequisite observations:
+  - Reaudit found stats recalc currently runs on a 100ms timeout while highlighter work runs asynchronously.
+  - This can produce stale/transient due counts on heavy pages.
+- Risks/assumptions carried in:
+  - Assumption: waiting for apply completion is acceptable for correctness and aligns with existing sequential batch processing intent.
+  - Risk: slower perceived status updates under heavy loads; acceptable tradeoff for correctness.
+
+### 2026-04-07 - Stage 9 Follow-up Implementation (P2 Highlight/Stats Completion Synchronization)
+- Completed:
+  - Removed fixed-delay (`100ms`) stats recalculation from token-apply paths.
+  - Made highlighter application completion explicit by returning `Promise<void>` from base/derived text highlighters.
+  - Updated standard and TTSU token apply functions to `await` highlighter completion before recalculating status-bar stats.
+  - Updated batch processing chain to `await applyFn(...)`, preserving sequential application while ensuring each paragraph’s highlight/update cycle completes before progressing.
+- Files changed:
+  - `src/apps/text-highlighter/base.text-highlighter.ts`
+  - `src/apps/text-highlighter/text-highlighter.ts`
+  - `src/apps/batches/apply-tokens.ts`
+  - `src/apps/batches/batch-controller.ts`
+  - `src/apps/parser/custom-parsers/ttsu.parser.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Treat highlight application as an asynchronous completion boundary for downstream UI/stat updates.
+  - Prefer completion-driven status recomputation over timer-based heuristics to avoid stale due/count rendering under heavy load.
+- Blockers / open issues:
+  - No active blocker.
+- Verification status:
+  - `npm run lint:fix` applied formatting normalization.
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Perform live heavy-page validation to confirm due/status-bar counters remain stable during long multi-paragraph parses.
+- Handoff:
+  - Requested robust fix for issue 3 is implemented.
+  - Stats refresh is now synchronized with completed highlighting instead of best-effort timing.

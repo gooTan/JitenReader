@@ -5,18 +5,9 @@ import { TtsuParagraphReader } from '../../paragraph-reader/ttsu.paragraph-reade
 import { AutomaticParser } from '../automatic.parser';
 import { TtsuTextHighlighter } from './ttsu-text-highlighter';
 
-let statsUpdateTimeout: number | undefined;
-
-const ttsuApplyTokens = (fragments: Fragment[], tokens: JitenToken[]): void => {
-  new TtsuTextHighlighter(fragments, tokens).apply();
-
-  if (statsUpdateTimeout) {
-    clearTimeout(statsUpdateTimeout);
-  }
-  statsUpdateTimeout = window.setTimeout(() => {
-    Registry.statusBar?.recalculateStats();
-    statsUpdateTimeout = undefined;
-  }, 100);
+const ttsuApplyTokens = async (fragments: Fragment[], tokens: JitenToken[]): Promise<void> => {
+  await new TtsuTextHighlighter(fragments, tokens).apply();
+  Registry.statusBar?.recalculateStats();
 };
 
 const getTtsuParagraphs = (

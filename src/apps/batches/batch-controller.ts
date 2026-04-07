@@ -89,7 +89,7 @@ export class BatchController {
             try {
               const value = await batch.promise;
 
-              applyFn(batch.data, value);
+              await applyFn(batch.data, value);
             } catch (error) {
               if (error instanceof Canceled) {
                 return;
