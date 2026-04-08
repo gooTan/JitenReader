@@ -1,6 +1,7 @@
 import { Empty } from '../types';
 
 type ModelFieldNamesRequest = { modelName: string };
+type ModelTemplatesRequest = { modelName: string };
 type FindNotesRequest = { query: string };
 type NotesInfoRequest = { notes: number[] };
 type CardsInfoRequest = { cards: number[] };
@@ -101,6 +102,7 @@ export type AnkiEndpoints = {
   deckNames: [Empty, string[]];
   modelNames: [Empty, string[]];
   modelFieldNames: [ModelFieldNamesRequest, string[]];
+  modelTemplates: [ModelTemplatesRequest, Record<string, { Front: string; Back: string }>];
   findNotes: [FindNotesRequest, number[]];
   notesInfo: [NotesInfoRequest, AnkiNoteInfo[]];
   cardsInfo: [CardsInfoRequest, AnkiCardInfo[]];

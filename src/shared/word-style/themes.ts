@@ -20,6 +20,7 @@ const PRESETS: [string, PresetTheme][] = [
           due: { effects: [{ type: 'text-colour', colour: '#ff4500' }] },
           blacklisted: { effects: [{ type: 'opacity', value: 0.5, hoverOnly: false }] },
           suspended: { effects: [{ type: 'opacity', value: 0.5, hoverOnly: false }] },
+          buried: { effects: [{ type: 'text-colour', colour: '#8f6f8f' }] },
           frequent: {
             effects: [{ type: 'underline', colour: '#4b8d7f', style: 'dotted', thickness: 2 }],
           },
@@ -54,6 +55,7 @@ const PRESETS: [string, PresetTheme][] = [
           due: { effects: [{ type: 'text-colour', colour: '#e8a735' }] },
           blacklisted: { effects: [{ type: 'text-colour', colour: '#777777' }] },
           suspended: { effects: [{ type: 'text-colour', colour: '#777777' }] },
+          buried: { effects: [{ type: 'text-colour', colour: '#b58db5' }] },
           frequent: {
             effects: [{ type: 'underline', colour: '#4b8dff', style: 'solid', thickness: 2 }],
           },
@@ -90,6 +92,7 @@ const PRESETS: [string, PresetTheme][] = [
           },
           blacklisted: { effects: [{ type: 'opacity', value: 0.4, hoverOnly: false }] },
           suspended: { effects: [{ type: 'opacity', value: 0.4, hoverOnly: false }] },
+          buried: { effects: [{ type: 'text-colour', colour: '#bbbbbb' }] },
           frequent: {
             effects: [{ type: 'underline', colour: '#999999', style: 'dotted', thickness: 1 }],
           },
@@ -134,6 +137,9 @@ const PRESETS: [string, PresetTheme][] = [
           },
           blacklisted: { effects: [{ type: 'text-colour', colour: '#555555' }] },
           suspended: { effects: [] },
+          buried: {
+            effects: [{ type: 'underline', colour: '#ff66ff', style: 'dashed', thickness: 2 }],
+          },
           frequent: {
             effects: [{ type: 'underline', colour: '#00ffff', style: 'solid', thickness: 2 }],
           },
@@ -163,6 +169,7 @@ const PRESETS: [string, PresetTheme][] = [
           due: { effects: [{ type: 'background', colour: '#ff4500', opacity: 0.15 }] },
           blacklisted: { effects: [{ type: 'opacity', value: 0.5, hoverOnly: false }] },
           suspended: { effects: [] },
+          buried: { effects: [{ type: 'background', colour: '#c080c0', opacity: 0.12 }] },
           frequent: { effects: [{ type: 'background', colour: '#4b8d7f', opacity: 0.1 }] },
           'i-plus-one': { effects: [{ type: 'background', colour: '#359eff', opacity: 0.1 }] },
           unparsed: { effects: [] },
@@ -196,6 +203,9 @@ const PRESETS: [string, PresetTheme][] = [
           },
           blacklisted: { effects: [] },
           suspended: { effects: [] },
+          buried: {
+            effects: [{ type: 'underline', colour: '#c080c0', style: 'dashed', thickness: 3 }],
+          },
           frequent: {
             effects: [{ type: 'underline', colour: '#40a840', style: 'dashed', thickness: 3 }],
           },

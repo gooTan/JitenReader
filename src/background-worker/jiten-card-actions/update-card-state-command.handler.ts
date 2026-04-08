@@ -21,9 +21,10 @@ export class UpdateCardStateCommandHandler extends BackgroundCommandHandler<Upda
     previousMetadata?: ReviewMetadata,
   ): Promise<void> {
     const selection = await this._reviewBackendSelector.getSelectionSnapshot();
-    let backendStatus = selection.status;
-    let reviewBackend = selection.backend;
-    let newCardState: JitenCardState[];
+    const backendStatus = selection.status;
+    const reviewBackend = selection.backend;
+    let newCardState: JitenCardState[] = [];
+    let metadataOverrides: Partial<ReviewMetadata> | undefined;
 
     try {
       newCardState = await reviewBackend.getCardState(wordId, readingIndex, {
@@ -31,37 +32,27 @@ export class UpdateCardStateCommandHandler extends BackgroundCommandHandler<Upda
         previousMetadata,
       });
     } catch {
-      const jitenBackend = this._reviewBackendSelector.getBackend('jiten');
-
-      if (!jitenBackend) {
-        throw new Error('Jiten backend is not configured.');
-      }
-
-      reviewBackend = jitenBackend;
-      newCardState = await reviewBackend.getCardState(wordId, readingIndex, {
-        targetCardId,
-        previousMetadata,
-      });
-      backendStatus = {
-        ...backendStatus,
-        activeBackend: 'jiten',
-        availability: {
-          ...backendStatus.availability,
-          anki: 'unavailable',
-        },
-      };
+      metadataOverrides =
+        backendStatus.activeBackend === 'anki'
+          ? this.getUnavailableAnkiMetadataOverrides(
+              wordId,
+              readingIndex,
+              previousMetadata,
+              targetCardId,
+            )
+          : undefined;
     }
 
-    const metadataOverrides =
-      backendStatus.activeBackend === 'anki'
-        ? this.getAnkiMetadataOverrides(
-            wordId,
-            readingIndex,
-            newCardState,
-            previousMetadata,
-            targetCardId,
-          )
-        : undefined;
+    if (!metadataOverrides && backendStatus.activeBackend === 'anki') {
+      metadataOverrides = this.getAnkiMetadataOverrides(
+        wordId,
+        readingIndex,
+        newCardState,
+        previousMetadata,
+        targetCardId,
+      );
+    }
+
     const freshness = this.getRefreshFreshness(
       backendStatus.activeBackend,
       newCardState,
@@ -75,10 +66,11 @@ export class UpdateCardStateCommandHandler extends BackgroundCommandHandler<Upda
       stateTags: newCardState,
       freshness,
       actionsAvailable: reviewBackend.getCapabilities().supportsDeckActions,
-      mappingState: metadataOverrides?.mappingState,
+      resolutionStatus: metadataOverrides?.resolutionStatus,
+      mappingOutcome: metadataOverrides?.mappingOutcome,
       dueState: metadataOverrides?.dueState,
-      targetState: metadataOverrides?.targetState,
       target: metadataOverrides?.target,
+      diagnostics: metadataOverrides?.diagnostics,
     });
 
     new CardStateUpdatedCommand(wordId, readingIndex, reviewMetadata).send();
@@ -101,10 +93,11 @@ export class UpdateCardStateCommandHandler extends BackgroundCommandHandler<Upda
           }
         : undefined;
     const target = previousMetadata?.target ?? fallbackTarget;
-    const mappingState =
-      previousMetadata?.mappingState ??
-      (target ? 'mapped' : newCardState.length > 0 ? 'mapped' : 'unmapped');
-    const targetState = previousMetadata?.targetState ?? (target ? 'selected' : 'none');
+    const resolutionStatus = previousMetadata?.resolutionStatus ?? 'resolved';
+    const mappingOutcome =
+      resolutionStatus === 'resolved'
+        ? (previousMetadata?.mappingOutcome ?? (target ? 'selected' : 'none'))
+        : undefined;
     const dueState = newCardState.includes(JitenCardState.DUE)
       ? 'due'
       : newCardState.length > 0
@@ -114,10 +107,35 @@ export class UpdateCardStateCommandHandler extends BackgroundCommandHandler<Upda
           : 'unknown';
 
     return {
-      mappingState,
+      resolutionStatus,
+      mappingOutcome,
       dueState,
-      targetState,
       target,
+      diagnostics: previousMetadata?.diagnostics,
+    };
+  }
+
+  private getUnavailableAnkiMetadataOverrides(
+    wordId: number,
+    readingIndex: number,
+    previousMetadata?: ReviewMetadata,
+    targetCardId?: number,
+  ): Partial<ReviewMetadata> {
+    const fallbackTarget =
+      targetCardId && targetCardId > 0
+        ? {
+            key: `anki:${targetCardId}`,
+            wordId,
+            readingIndex,
+            ankiCardId: targetCardId,
+          }
+        : undefined;
+
+    return {
+      resolutionStatus: 'backend-unavailable',
+      dueState: 'unavailable',
+      target: previousMetadata?.target ?? fallbackTarget,
+      diagnostics: previousMetadata?.diagnostics,
     };
   }
 

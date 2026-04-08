@@ -78,8 +78,8 @@ export class MiningActions {
       ...card.reviewMetadata,
       freshness: 'stale' as const,
       dueState: nextState.includes(JitenCardState.DUE) ? 'due' : 'notDue',
-      mappingState: nextState.length > 0 ? 'mapped' : 'unmapped',
-      targetState: nextState.length > 0 ? 'selected' : 'none',
+      resolutionStatus: 'resolved' as const,
+      mappingOutcome: nextState.length > 0 ? ('selected' as const) : ('none' as const),
       target: nextState.length > 0 ? card.reviewMetadata.target : undefined,
       stateTags: nextState,
     };

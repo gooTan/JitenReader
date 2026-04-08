@@ -8,6 +8,7 @@ export const STYLEABLE_STATES: Record<string, string> = {
   due: 'Due',
   blacklisted: 'Blacklisted',
   suspended: 'Suspended',
+  buried: 'Buried',
   frequent: 'Frequent',
   'i-plus-one': 'I+1',
   unparsed: 'Unparsed',

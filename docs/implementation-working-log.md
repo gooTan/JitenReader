@@ -1,10 +1,10 @@
 # Implementation Working Log
 
 ## Current Snapshot
-- Current stage: Stage 9A - Harden Anki Settings Surface Before Stage 10
-- Overall status: Stage 9A implementation plus follow-up UX hardening is in place; Anki settings section is now positioned above Parsing/Features/Other to match requested navigation priority.
-- Active backend behavior: Anki request URLs run through shared canonical normalization before fetch; settings-side endpoint flows refresh dependent Anki editors on page-load hydration, endpoint save changes, and explicit endpoint validation.
-- Last updated: 2026-04-08 16:07:22 +10:00
+- Current stage: Stage 10 - Complete Anki Read-Side Identity
+- Overall status: Stage 10 foundation is now implemented across shared config normalization, Anki read-side matching, and settings/popup state surfacing; live/manual verification and any follow-up refinements remain.
+- Active backend behavior: Anki read-side matching now uses merged derived-plus-explicit readonly config, template-ord-based filtering, and explicit `resolutionStatus` / `mappingOutcome` metadata; settings-side endpoint refresh now updates readonly override selectors as well as write-side deck/model/field selectors.
+- Last updated: 2026-04-08 18:06:25 +10:00
 
 ## Architectural Decisions
 ### Decision: Keep Stage 0 output documentation-only
@@ -71,9 +71,9 @@
   - No source/runtime behavior files in `src/` were modified.
 
 ## In Progress
-- Task: Stage 8B closure and handoff.
-- Current status: Stage 8B accepted with live evidence for success and explicit failure paths.
-- Next immediate step: Start next stage preflight only.
+- Task: Stage 10 implementation verification and closure.
+- Current status: Core Stage 10 implementation is in place and verified by lint/build; live/manual verification against real Anki collections is still outstanding.
+- Next immediate step: Manually validate derived/override config behavior, non-zero template ord matching, and suspended/buried UI surfacing against Anki.
 
 ## Open Tasks
 - [x] Trace page parsing and enrichment ownership in content scripts and background worker.
@@ -88,7 +88,7 @@
 
 ## Known Issues / Blockers
 - The path `docs/stages/stage-0-codebase-reconnaissance-and-architecture-map.md` is not present; canonical file is `docs/stages/stage_0_codebase_reconnaissance_and_architecture_map.md`.
-- No active blocker for Stage 8B.
+- No active blocker for Stage 10.
 
 ## Verification Status
 - Verified:
@@ -122,12 +122,151 @@
 - Stage 7 and Stage 8A are complete and previously validated.
 - The next model instance should start by reading this log, then:
   - `docs/stage_execution_protocol.md`
-  - next target stage document in `docs/stages/`
-  - `docs/stages/stage_8B_Integrate_JitenReader_with_the_Anki_Addon.md`
-- Stage 8B is complete; do not reopen unless regressions are found during next-stage work.
-- Next run should begin at the next planned stage with standard preflight.
+  - `docs/stages/stage_10_complete_anki_read_side_identity.md`
+- Stage 10 is partially complete in code and verified by lint/build, but still needs live/manual verification before closure.
+- Next run should stay in Stage 10 and verify:
+  - derived readonly summary behavior
+  - explicit readonly override behavior
+  - matching against non-zero template ord cards
+  - suspended/buried frontend surfacing
 
 ## Run History
+### 2026-04-08 - Stage 10 Follow-up Fixes (Derived Matching Resilience + Single-Select Templates)
+- Completed work:
+  - Fixed readonly-config readiness so invalid explicit override rows no longer disable otherwise valid derived read-side matching.
+  - Kept issue reporting in the readonly summary while allowing the backend to continue using valid merged derived/explicit configs when available.
+  - Changed frontend template selectors from multi-select to single-select:
+    - mining / blacklist / never-forget derived-config template selector
+    - advanced readonly override template selector
+  - Added explicit `All templates` empty-option behavior for both selectors.
+  - Hardened template-ord derivation so model template ords are derived from live Anki note/card data when available, with ordered-template fallback only when no sample card ords can be observed.
+- Files changed:
+  - `src/shared/anki/readonly-config.ts`
+  - `src/shared/anki/get-model-templates.ts`
+  - `src/views/elements/html-mining-input-element.ts`
+  - `src/views/elements/html-anki-readonly-configs-element.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Invalid advanced overrides should not poison valid derived read-side identity defaults when a usable merged config set still exists.
+  - UI should expose a single template selection per config row; users can express multiple template-specific rules by adding multiple override rows instead of one row with multiple template ords.
+  - Template ords should be derived from live Anki card data when available to avoid treating template list position as the only source of truth.
+- Blockers / open issues:
+  - No active blocker.
+  - Live/manual Anki verification is still required for the sample-card-ord derivation path and for edge cases where a model has no existing notes/cards yet.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Validate against Anki that:
+    - a broken explicit override no longer disables valid derived matching
+    - template selectors allow only one template at a time
+    - template ords resolve correctly for models with existing notes/cards
+    - fallback behavior remains sane for models without existing cards
+- Handoff:
+  - The two review findings were addressed in code.
+  - Stage 10 still needs live/manual verification before final closure, but the main correctness gaps found in the doc-to-code review have been fixed.
+
+### 2026-04-08 - Stage 10 Foundation Implementation (Merged Readonly Config, Template-Ords, Resolution Contract)
+- Completed work:
+  - Added centralized readonly-config derivation and normalization in shared Anki helpers:
+    - derived from mining / blacklist / never-forget configs
+    - explicit readonly overrides merged on top by normalized identity
+    - config insufficiency issues surfaced through one summary structure
+  - Extended Anki config structures so read-side template constraints can be stored explicitly:
+    - write-side deck configs now carry `cardTemplateOrds`
+    - readonly override configs now carry `templateOrds`
+  - Added Anki model-template discovery helper and used template ord as the canonical read-side matching key.
+  - Reworked Anki read backend matching to:
+    - consume merged normalized readonly config
+    - filter candidates per-config instead of by coarse global unions
+    - support configured non-zero template ord matching
+    - attach template name diagnostics to selected/ambiguous targets
+    - emit Stage 10-style `resolutionStatus` / `mappingOutcome` metadata
+  - Removed parse-time silent fallback to Jiten for Anki read-side identity failures:
+    - parse-time failures now surface as `backend-unavailable`
+    - insufficient readonly config now surfaces as `config-insufficient`
+  - Surfaced `suspended` and `buried` as first-class Anki-derived state tags with explicit precedence:
+    - suspended wins over buried
+    - buried is now styleable in built-in word-style presets/constants
+    - popup backend-status label now distinguishes suspended, buried, ambiguous, config-insufficient, and backend-unavailable cases
+  - Added Stage 10 settings-surface controls:
+    - mining deck inputs now expose card-template ord selection for derived read-side config
+    - Anki settings now include an Advanced Read-Side Matching section with:
+      - derived readonly summary
+      - explicit readonly override editor
+    - endpoint refresh now reloads readonly override selectors alongside mining selectors
+- Files changed:
+  - `src/shared/anki/types.ts`
+  - `src/shared/anki/api.types.ts`
+  - `src/shared/anki/get-model-templates.ts`
+  - `src/shared/anki/readonly-config.ts`
+  - `src/shared/configuration/default-configuration.ts`
+  - `src/shared/jiten/types.ts`
+  - `src/shared/jiten/create-review-metadata.ts`
+  - `src/background-worker/review-backend/review-backend.types.ts`
+  - `src/background-worker/review-backend/jiten-review-backend.ts`
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+  - `src/background-worker/parser/parser.ts`
+  - `src/background-worker/jiten-card-actions/update-card-state-command.handler.ts`
+  - `src/apps/popup/actions/grading-controller.ts`
+  - `src/apps/popup/actions/mining-actions.ts`
+  - `src/apps/popup/popup.ts`
+  - `src/shared/word-style/constants.ts`
+  - `src/shared/word-style/themes.ts`
+  - `src/styles/variables/_colors.scss`
+  - `src/views/elements/html-mining-input-element.ts`
+  - `src/views/elements/html-anki-readonly-configs-element.ts`
+  - `src/views/settings.ts`
+  - `src/views/settings.html`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Centralize readonly-config policy in shared normalization so backend and settings consume the same merged interpretation.
+  - Treat template ord as the canonical machine identifier while keeping template name as optional diagnostic/display metadata.
+  - Do not silently fall back to Jiten during Anki read-side identity resolution; surface `backend-unavailable` / `config-insufficient` explicitly instead.
+  - Keep Stage 10 UI conservative by surfacing ambiguous candidates in metadata/diagnostics while still blocking grade submission when no single selected Anki target exists.
+- Blockers / open issues:
+  - No active implementation blocker.
+  - Manual/live verification is still required for real Anki collections and multi-template models.
+  - Popup/action UX still uses the new metadata/status labels rather than the fuller blocked-state panel planned for Stage 11.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+  - Live/manual Anki verification not yet performed in this run.
+- Next recommended step:
+  - Verify Stage 10 end-to-end against Anki by checking:
+    - derived summary matches current mining/blacklist/never-forget configs
+    - explicit override rows can target additional deck/model/template combinations
+    - a non-zero template ord card is matched when selected
+    - suspended and buried cards surface distinctly in the popup/highlighter
+- Handoff:
+  - Stage 10 foundation is in place across config, backend, and frontend layers.
+  - The next run should stay in Stage 10, perform live/manual validation, and only then decide whether closure or a narrow follow-up patch is needed.
+
+### 2026-04-08 - Start-of-Run (Stage 10 - Complete Anki Read-Side Identity)
+- Stage:
+  - Stage 10 - Complete Anki Read-Side Identity.
+- Run intent:
+  - Implement the Stage 10 read-side identity foundation so Anki-backed matching is deterministic, configurable, and transparent.
+- Current implementation state:
+  - Stage 9A prerequisite settings-surface work is in place and the Anki settings section is reachable/trustworthy enough for Stage 10 follow-up.
+  - Current read-side identity is still incomplete in the ways called out by the stage spec:
+    - readonly matching depends on hidden `ankiReadonlyConfigs`
+    - card-template matching effectively assumes template ord `0`
+    - `suspended` and `buried` are not yet fully first-class surfaced Anki states
+    - popup/action layers still have to infer too much from incomplete target identity data
+- Exact goal of this run:
+  - Make read-side lookup config explicit, merged, and deterministic.
+  - Remove hardcoded "Card 1 only" matching by using configured template ord data.
+  - Surface `suspended` and `buried` as authoritative Anki-backed states through unified metadata and frontend consumers.
+  - Leave behind the mandated Stage 10 output contract with `resolutionStatus` and deterministic mapping outcomes.
+- Blockers or prerequisites already recorded:
+  - Stage 10 assumes Stage 9A is already complete; the working log indicates that prerequisite is satisfied.
+  - No active blocker is currently recorded in the working log.
+- Risks/assumptions carried in:
+  - Assumption: existing mining / blacklist / never-forget configs already contain enough structured data to derive safe readonly defaults for many users.
+  - Assumption: Stage 10 should preserve current Stage 9 targeted refresh and backend-status semantics while enriching the matched-target contract.
+  - Risk: config-schema and settings-surface changes may touch multiple shared/frontend/background layers, so normalization must stay centralized to avoid drift.
+
 ### 2026-04-07 - Stage 9 Follow-up Implementation (Addon Registration Bootstrap Robustness Hardening)
 - Completed:
   - Hardened add-on bootstrap convergence behavior so partial success no longer stops retry flow.

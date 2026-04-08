@@ -134,6 +134,7 @@ export const DEFAULT_CONFIGURATION = Object.freeze<ConfigurationSchema>({
     proxy: false,
     wordField: '',
     readingField: '',
+    cardTemplateOrds: [],
     templateTargets: [],
   },
   ankiBlacklistConfig: {
@@ -142,6 +143,7 @@ export const DEFAULT_CONFIGURATION = Object.freeze<ConfigurationSchema>({
     proxy: false,
     wordField: '',
     readingField: '',
+    cardTemplateOrds: [],
     templateTargets: [],
   },
   ankiNeverForgetConfig: {
@@ -150,6 +152,7 @@ export const DEFAULT_CONFIGURATION = Object.freeze<ConfigurationSchema>({
     proxy: false,
     wordField: '',
     readingField: '',
+    cardTemplateOrds: [],
     templateTargets: [],
   },
   ankiReadonlyConfigs: [],

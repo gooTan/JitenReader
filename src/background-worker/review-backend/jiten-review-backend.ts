@@ -37,9 +37,9 @@ export class JitenReviewBackend implements ReviewBackend {
 
       states[key] = {
         stateTags,
-        mappingState: 'mapped',
+        resolutionStatus: 'resolved',
+        mappingOutcome: 'selected',
         dueState,
-        targetState: 'selected',
         target: {
           key,
           wordId,

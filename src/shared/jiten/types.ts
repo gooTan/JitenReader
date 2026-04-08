@@ -31,6 +31,8 @@ export enum JitenCardState {
   MASTERED = 'mastered',
   BLACKLISTED = 'blacklisted',
   DUE = 'due',
+  SUSPENDED = 'suspended',
+  BURIED = 'buried',
 }
 
 export type JitenRawVocabulary = {
@@ -48,9 +50,9 @@ export type JitenRawVocabulary = {
 
 export type JitenReviewBackend = 'jiten' | 'anki';
 
-export type ReviewMappingState = 'mapped' | 'unmapped' | 'ambiguous';
+export type ReviewResolutionStatus = 'resolved' | 'config-insufficient' | 'backend-unavailable';
+export type ReviewMappingOutcome = 'selected' | 'none' | 'ambiguous';
 export type ReviewDueState = 'due' | 'notDue' | 'unavailable' | 'unknown';
-export type ReviewTargetState = 'selected' | 'none' | 'ambiguous';
 export type ReviewFreshnessState = 'fresh' | 'stale' | 'unknown';
 
 export type ReviewTargetMetadata = {
@@ -62,6 +64,20 @@ export type ReviewTargetMetadata = {
   ankiDeck?: string;
   ankiModel?: string;
   ankiTemplateOrd?: number;
+  ankiTemplateName?: string;
+};
+
+export type ReviewTargetCandidateSummary = {
+  ankiCardId: number;
+  ankiDeck: string;
+  ankiModel: string;
+  ankiTemplateName?: string;
+  ankiTemplateOrd: number;
+};
+
+export type ReviewResolutionDiagnostics = {
+  candidateCount?: number;
+  candidateSummary?: ReviewTargetCandidateSummary[];
 };
 
 /**
@@ -74,10 +90,11 @@ export type ReviewTargetMetadata = {
  */
 export type ReviewMetadata = {
   backend: JitenReviewBackend;
-  mappingState: ReviewMappingState;
+  resolutionStatus: ReviewResolutionStatus;
+  mappingOutcome?: ReviewMappingOutcome;
   dueState: ReviewDueState;
-  targetState: ReviewTargetState;
   target?: ReviewTargetMetadata;
+  diagnostics?: ReviewResolutionDiagnostics;
   freshness: ReviewFreshnessState;
   actionsAvailable: boolean;
   stateTags: JitenCardState[];

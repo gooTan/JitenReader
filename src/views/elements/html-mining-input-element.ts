@@ -1,5 +1,6 @@
 import { getDecks } from '@shared/anki/get-decks';
 import { getFields } from '@shared/anki/get-fields';
+import { AnkiModelTemplate, getModelTemplates } from '@shared/anki/get-model-templates';
 import { getModels } from '@shared/anki/get-models';
 import { AnkiFieldTemplateName, DeckConfiguration, TemplateTarget } from '@shared/anki/types';
 import { createElement } from '@shared/dom/create-element';
@@ -31,6 +32,7 @@ export class HTMLMiningInputElement extends HTMLElement {
   protected _decks: string[] = [];
   protected _models: string[] = [];
   protected _fields: string[] = [];
+  protected _modelTemplates: AnkiModelTemplate[] = [];
 
   protected _shadow: ShadowRoot;
   protected _input: HTMLInputElement;
@@ -46,6 +48,7 @@ export class HTMLMiningInputElement extends HTMLElement {
   protected _proxyEnabled = false;
   protected _suppressChangeEvent = false;
   protected _templateTargets: TemplateTarget[] = [];
+  protected _cardTemplateSelect = createElement('select');
 
   protected get _availableFields(): string[] {
     return this._fields.filter(
@@ -92,6 +95,7 @@ export class HTMLMiningInputElement extends HTMLElement {
     await this.updateDecks(ankiConnectUrl);
     await this.updateModels(ankiConnectUrl);
     await this.updateFields(ankiConnectUrl, this.value.model);
+    await this.updateModelTemplates(ankiConnectUrl, this.value.model);
 
     this.unpackDeck();
     this.packDeck(false);
@@ -141,17 +145,20 @@ export class HTMLMiningInputElement extends HTMLElement {
         this.packDeck();
       });
     });
+    this._cardTemplateSelect.addEventListener('change', () => this.packDeck());
 
     this._selects.modelInput.addEventListener('change', () => {
       if (!this._fetchUrl.length) {
+        this.updateModelTemplateOptions();
         this.validateTemplatesThenPackDeck();
 
         return;
       }
 
-      void this.updateFields(this._fetchUrl, this.value.model).then(() =>
-        this.validateTemplatesThenPackDeck(),
-      );
+      void Promise.all([
+        this.updateFields(this._fetchUrl, this.value.model),
+        this.updateModelTemplates(this._fetchUrl, this.value.model),
+      ]).then(() => this.validateTemplatesThenPackDeck());
     });
   }
 
@@ -191,6 +198,7 @@ export class HTMLMiningInputElement extends HTMLElement {
             ]),
           ],
         },
+        this.buildCardTemplateOrdBlock(),
         this.buildTemplateBlock(),
       ],
     });
@@ -232,6 +240,23 @@ export class HTMLMiningInputElement extends HTMLElement {
           innerText: label,
         },
         { tag: 'div', class: ['select'], children: [input] },
+      ],
+    });
+  }
+
+  protected buildCardTemplateOrdBlock(): HTMLDivElement {
+    return createElement('div', {
+      children: [
+        {
+          tag: 'label',
+          innerText: 'Card Templates Used For Read-Side Matching',
+        },
+        { tag: 'div', class: ['select'], children: [this._cardTemplateSelect] },
+        {
+          tag: 'p',
+          style: { opacity: '0.8' },
+          innerText: 'Leave empty to allow all card templates for this note type.',
+        },
       ],
     });
   }
@@ -441,6 +466,43 @@ export class HTMLMiningInputElement extends HTMLElement {
     });
   }
 
+  protected async updateModelTemplates(ankiConnectUrl: string, model: string): Promise<void> {
+    this._modelTemplates = model ? await getModelTemplates(model, { ankiConnectUrl }) : [];
+    this.updateModelTemplateOptions();
+  }
+
+  protected updateModelTemplateOptions(
+    selectedOrds: number[] = this.getSelectedCardTemplateOrds(),
+  ): void {
+    this._cardTemplateSelect.replaceChildren(
+      createElement('option', {
+        attributes: { value: '' },
+        innerText: 'All templates',
+      }),
+      ...this._modelTemplates.map((template) =>
+        createElement('option', {
+          attributes: { value: String(template.ord) },
+          innerText: `${template.ord}: ${template.name}`,
+        }),
+      ),
+    );
+    const [selectedOrd] = selectedOrds;
+
+    this._cardTemplateSelect.value = selectedOrd === undefined ? '' : String(selectedOrd);
+  }
+
+  protected getSelectedCardTemplateOrds(): number[] {
+    const selectedValue = this._cardTemplateSelect.value;
+
+    if (!selectedValue.length) {
+      return [];
+    }
+
+    const ord = Number(selectedValue);
+
+    return Number.isInteger(ord) && ord >= 0 ? [ord] : [];
+  }
+
   protected packDeck(dispatchChange = true): void {
     this._suppressChangeEvent = !dispatchChange;
 
@@ -449,6 +511,7 @@ export class HTMLMiningInputElement extends HTMLElement {
       model: this._selects.modelInput.value,
       wordField: this._selects.wordInput.value,
       readingField: this._selects.readingInput.value,
+      cardTemplateOrds: this.getSelectedCardTemplateOrds(),
       proxy: this._proxyEnabled,
       templateTargets: this.cloneTemplateTargets(this._templateTargets),
     };
@@ -473,6 +536,7 @@ export class HTMLMiningInputElement extends HTMLElement {
 
     this._proxyEnabled = currentValue.proxy === true;
     this._templateTargets = this.cloneTemplateTargets(currentValue.templateTargets ?? []);
+    this.updateModelTemplateOptions(currentValue.cardTemplateOrds ?? []);
 
     this.buildTemplateList();
   }

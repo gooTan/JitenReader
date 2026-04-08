@@ -869,15 +869,24 @@ export class Popup {
   }
 
   private getBackendStatusBlock(card: JitenCard): HTMLDivElement {
-    const { backend, freshness, dueState, targetState } = card.reviewMetadata;
+    const { backend, freshness, dueState, resolutionStatus, mappingOutcome, stateTags } =
+      card.reviewMetadata;
     const backendLabel = backend === 'anki' ? 'Anki' : 'Jiten';
 
     let statusLabel = freshness === 'stale' ? 'refreshing' : 'synced';
 
-    if (targetState === 'ambiguous') {
+    if (resolutionStatus === 'backend-unavailable') {
+      statusLabel = 'backend unavailable';
+    } else if (resolutionStatus === 'config-insufficient') {
+      statusLabel = 'config insufficient';
+    } else if (mappingOutcome === 'ambiguous') {
       statusLabel = 'ambiguous target';
-    } else if (targetState === 'none' && backend === 'anki') {
+    } else if (mappingOutcome === 'none' && backend === 'anki') {
       statusLabel = 'no target';
+    } else if (stateTags.includes(JitenCardState.SUSPENDED)) {
+      statusLabel = 'suspended';
+    } else if (stateTags.includes(JitenCardState.BURIED)) {
+      statusLabel = 'buried';
     } else if (dueState === 'unavailable') {
       statusLabel = 'backend unavailable';
     }

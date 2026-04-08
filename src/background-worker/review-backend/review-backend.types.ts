@@ -4,19 +4,21 @@ import {
   JitenRawVocabulary,
   ReviewMetadata,
   ReviewDueState,
-  ReviewMappingState,
+  ReviewMappingOutcome,
+  ReviewResolutionDiagnostics,
+  ReviewResolutionStatus,
   ReviewTargetMetadata,
-  ReviewTargetState,
 } from '@shared/jiten/types';
 
 export type ReviewDeck = 'mining' | 'blacklist' | 'neverForget' | 'suspend';
 export type ReviewDeckAction = 'add' | 'remove';
 export type ReviewTermResolution = {
   stateTags: JitenCardState[];
-  mappingState: ReviewMappingState;
+  resolutionStatus: ReviewResolutionStatus;
+  mappingOutcome?: ReviewMappingOutcome;
   dueState: ReviewDueState;
-  targetState: ReviewTargetState;
   target?: ReviewTargetMetadata;
+  diagnostics?: ReviewResolutionDiagnostics;
 };
 export type ReviewTermResolutionMap = Record<string, ReviewTermResolution>;
 

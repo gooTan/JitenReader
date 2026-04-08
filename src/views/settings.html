@@ -729,6 +729,29 @@
             <p>The Word and Reading configuration will also be used to look up words in Anki.</p>
           </mining-input>
         </div>
+
+        <div data-show="ankiUrl && enableAnkiIntegration">
+          <h6>Advanced Read-Side Matching</h6>
+          <div class="form-box-parent">
+            <div class="form-box">
+              <p style="opacity: 0.8; padding-top: 0.5em">
+                JitenReader derives safe read-side Anki lookup rules from your Mining, Never Forget,
+                and Blacklist deck settings. Use the advanced overrides only when you need extra
+                read-side targets or more specific matching.
+              </p>
+              <div id="anki-readonly-summary"></div>
+            </div>
+          </div>
+
+          <div class="form-box-parent">
+            <div class="form-box">
+              <anki-readonly-configs
+                id="ankiReadonlyConfigs"
+                name="ankiReadonlyConfigs"
+              ></anki-readonly-configs>
+            </div>
+          </div>
+        </div>
       </div>
 
       <details id="parsing" class="section-collapsible" data-show="jitenApiKey">

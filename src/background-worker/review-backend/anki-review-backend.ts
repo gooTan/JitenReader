@@ -5,14 +5,17 @@ import { findNotesMany } from '@shared/anki/find-notes-many';
 import { getApiVersion } from '@shared/anki/get-api-version';
 import { getCollectionCreationTime } from '@shared/anki/get-collection-creation-time';
 import { getIntervals } from '@shared/anki/get-intervals';
+import { AnkiModelTemplate, getModelTemplates } from '@shared/anki/get-model-templates';
 import { notesInfo } from '@shared/anki/notes-info';
+import { getReadonlyDiscoverWordConfigurationSummary } from '@shared/anki/readonly-config';
 import { targetedReviewWrite } from '@shared/anki/targeted-review-write';
-import { DiscoverWordConfiguration } from '@shared/anki/types';
+import { DiscoverWordConfigurationEntry } from '@shared/anki/types';
 import { getConfiguration } from '@shared/configuration/get-configuration';
 import {
   JitenCardState,
   JitenRawVocabulary,
   JitenRating,
+  ReviewTargetCandidateSummary,
   ReviewTargetMetadata,
 } from '@shared/jiten/types';
 import { TargetedReviewWriteError, UnsupportedReviewOperationError } from './review-backend.errors';
@@ -44,22 +47,18 @@ const ANKI_QUEUE_REVIEW = 2;
 const ANKI_QUEUE_RELEARNING = 3;
 const ANKI_QUEUE_PREVIEW = 4;
 const ANKI_QUEUE_NEW = 0;
+const ANKI_QUEUE_SUSPENDED = -1;
+const ANKI_QUEUE_SIBLING_BURIED = -2;
+const ANKI_QUEUE_MANUALLY_BURIED = -3;
 const ANKI_FALLBACK_ROLLOVER_HOUR = 4;
 const ANKI_MATURE_INTERVAL_DAYS = 21;
 const ROLLOVER_CACHE_TTL_MS = 30_000;
 const COLLECTION_CREATION_CACHE_TTL_MS = 300_000;
-const ELIGIBLE_TEMPLATE_ORDS = new Set<number>([0]);
 
 type AnkiTargetCandidate = {
   target: ReviewTargetMetadata;
   stateTags: JitenCardState[];
   dueState: 'due' | 'notDue';
-};
-
-type EligibleAnkiTargets = {
-  decks: Set<string>;
-  models: Set<string>;
-  templates: Set<number>;
 };
 
 type CacheEntry<T> = {
@@ -75,9 +74,12 @@ type TermContext = {
 };
 
 type LookupConfig = {
-  config: DiscoverWordConfiguration;
+  config: DiscoverWordConfigurationEntry['config'];
   id: string;
+  deck: string;
   model: string;
+  readingField: string;
+  templateOrds: number[];
   wordField: string;
 };
 
@@ -133,6 +135,7 @@ export class AnkiReviewBackend implements ReviewBackend {
   private readonly _notesInfoCache = new Map<number, CacheEntry<AnkiNoteInfo>>();
   private readonly _cardsInfoCache = new Map<number, CacheEntry<AnkiCardInfo>>();
   private readonly _intervalsCache = new Map<number, CacheEntry<number>>();
+  private readonly _modelTemplatesCache = new Map<string, CacheEntry<AnkiModelTemplate[]>>();
 
   public getCapabilities(): ReviewBackendCapabilities {
     return ANKI_REVIEW_BACKEND_CAPABILITIES;
@@ -150,6 +153,7 @@ export class AnkiReviewBackend implements ReviewBackend {
     this._notesInfoCache.clear();
     this._cardsInfoCache.clear();
     this._intervalsCache.clear();
+    this._modelTemplatesCache.clear();
   }
 
   public async getParseReviewStates(
@@ -158,30 +162,26 @@ export class AnkiReviewBackend implements ReviewBackend {
     await this.ensureReadOnlyPathReady();
     await this.ensureRolloverHourLoaded();
     await this.ensureCollectionCreatedAtLoaded();
-
-    const readonlyConfigs = await getConfiguration('ankiReadonlyConfigs');
-    const eligibleTargets = await this.getEligibleAnkiTargets(readonlyConfigs);
     const termContexts = this.getUniqueTermContexts(vocabulary);
+    const readonlyConfigSummary = await this.getReadonlyConfigSummary();
 
-    if (readonlyConfigs.length === 0) {
+    if (readonlyConfigSummary.status !== 'ready') {
       return this.buildResolutionMapFromTerms(vocabulary, termContexts, () =>
-        this.createUnavailableResolution(),
+        this.createConfigInsufficientResolution(),
       );
     }
 
-    if (eligibleTargets.models.size === 0 || eligibleTargets.decks.size === 0) {
-      return this.buildResolutionMapFromTerms(vocabulary, termContexts, () =>
-        this.createUnavailableResolution(),
-      );
-    }
-
-    const lookupConfigs = this.getLookupConfigs(readonlyConfigs);
+    const lookupConfigs = this.getLookupConfigs(readonlyConfigSummary.mergedConfigs);
     const plans = this.createLookupPlans(termContexts, lookupConfigs);
     const planLookupResult = await this.resolvePlanNoteIds(plans);
     const notesLookupResult = await this.readNotesIndexed(
       this.getUniqueIds(planLookupResult.noteIdsByPlanKey.values()),
     );
     const notesById = notesLookupResult.notesById;
+
+    await this.primeModelTemplates(
+      Array.from(new Set(Array.from(notesById.values(), (note) => note.modelName))),
+    );
     const cardsLookupResult = await this.readCardsIndexed(
       this.getUniqueIds(Array.from(notesById.values(), (note) => note.cards)),
     );
@@ -199,7 +199,6 @@ export class AnkiReviewBackend implements ReviewBackend {
         notesById,
         cardsById,
         intervalsByCardId,
-        eligibleTargets,
       );
 
       resolutionsByTerm.set(termContext.termKey, resolution);
@@ -304,6 +303,24 @@ export class AnkiReviewBackend implements ReviewBackend {
     _sentence?: string,
   ): Promise<void> {
     throw new UnsupportedReviewOperationError('runDeckAction', 'anki');
+  }
+
+  private async getReadonlyConfigSummary(): Promise<
+    ReturnType<typeof getReadonlyDiscoverWordConfigurationSummary>
+  > {
+    const [miningConfig, blacklistConfig, neverForgetConfig, explicitConfigs] = await Promise.all([
+      getConfiguration('ankiMiningConfig'),
+      getConfiguration('ankiBlacklistConfig'),
+      getConfiguration('ankiNeverForgetConfig'),
+      getConfiguration('ankiReadonlyConfigs'),
+    ]);
+
+    return getReadonlyDiscoverWordConfigurationSummary({
+      explicitConfigs,
+      blacklistConfig,
+      miningConfig,
+      neverForgetConfig,
+    });
   }
 
   private async ensureReadOnlyPathReady(): Promise<void> {
@@ -430,24 +447,16 @@ export class AnkiReviewBackend implements ReviewBackend {
     return contexts;
   }
 
-  private getLookupConfigs(configs: DiscoverWordConfiguration[]): LookupConfig[] {
-    return configs
-      .map((config, index) => {
-        const model = config.model?.trim();
-        const wordField = config.wordField?.trim();
-
-        if (!model?.length || !wordField?.length) {
-          return null;
-        }
-
-        return {
-          config,
-          id: `${index}:${model}:${wordField}`,
-          model,
-          wordField,
-        };
-      })
-      .filter((config): config is LookupConfig => Boolean(config));
+  private getLookupConfigs(configs: DiscoverWordConfigurationEntry[]): LookupConfig[] {
+    return configs.map(({ config, id }) => ({
+      config,
+      id,
+      deck: config.deck,
+      model: config.model,
+      readingField: config.readingField,
+      templateOrds: config.templateOrds,
+      wordField: config.wordField,
+    }));
   }
 
   private createLookupPlans(
@@ -463,10 +472,8 @@ export class AnkiReviewBackend implements ReviewBackend {
           this.createAnkiQuerySegment(lookupConfig.wordField, termContext.vocabulary.spelling),
         ];
 
-        const deck = lookupConfig.config.deck?.trim();
-
-        if (deck?.length) {
-          queryParts.push(this.createAnkiQuerySegment('deck', deck));
+        if (lookupConfig.deck.length) {
+          queryParts.push(this.createAnkiQuerySegment('deck', lookupConfig.deck));
         }
 
         plans.push({
@@ -784,7 +791,6 @@ export class AnkiReviewBackend implements ReviewBackend {
     notesById: Map<number, AnkiNoteInfo>,
     cardsById: Map<number, AnkiCardInfo>,
     intervalsByCardId: Map<number, number>,
-    eligibleTargets: EligibleAnkiTargets,
   ): ReviewTermResolution {
     const candidates: AnkiTargetCandidate[] = [];
     const seenTargets = new Set<string>();
@@ -796,7 +802,7 @@ export class AnkiReviewBackend implements ReviewBackend {
       for (const noteId of noteIds) {
         const note = notesById.get(noteId);
 
-        if (!note || !eligibleTargets.models.has(note.modelName)) {
+        if (note?.modelName !== lookupConfig.model) {
           continue;
         }
 
@@ -806,10 +812,10 @@ export class AnkiReviewBackend implements ReviewBackend {
           continue;
         }
 
-        const readingField = lookupConfig.config.readingField?.trim();
-
-        if (readingField?.length) {
-          const noteReading = this.normaliseReadingValue(note.fields[readingField]?.value ?? '');
+        if (lookupConfig.readingField.length) {
+          const noteReading = this.normaliseReadingValue(
+            note.fields[lookupConfig.readingField]?.value ?? '',
+          );
 
           if (noteReading !== termContext.normalisedReading) {
             continue;
@@ -823,20 +829,21 @@ export class AnkiReviewBackend implements ReviewBackend {
             continue;
           }
 
-          if (!eligibleTargets.decks.has(card.deckName)) {
+          if (lookupConfig.deck.length && card.deckName !== lookupConfig.deck) {
             continue;
           }
 
-          if (!eligibleTargets.models.has(card.modelName)) {
+          if (card.modelName !== lookupConfig.model) {
             continue;
           }
 
-          if (!eligibleTargets.templates.has(card.ord)) {
+          if (lookupConfig.templateOrds.length && !lookupConfig.templateOrds.includes(card.ord)) {
             continue;
           }
 
           const due = this.isCardDue(card);
           const stateTags = this.getStateTags(card.queue, due, intervalsByCardId.get(card.cardId));
+          const templateName = this.getTemplateName(card.modelName, card.ord);
           const candidate: AnkiTargetCandidate = {
             target: {
               key: `anki:${card.cardId}`,
@@ -847,6 +854,7 @@ export class AnkiReviewBackend implements ReviewBackend {
               ankiDeck: card.deckName,
               ankiModel: card.modelName,
               ankiTemplateOrd: card.ord,
+              ankiTemplateName: templateName,
             },
             stateTags,
             dueState: due ? 'due' : 'notDue',
@@ -876,9 +884,15 @@ export class AnkiReviewBackend implements ReviewBackend {
 
       return {
         stateTags: mergedStateTags,
-        mappingState: 'ambiguous',
+        resolutionStatus: 'resolved',
+        mappingOutcome: 'ambiguous',
         dueState: hasDueCandidate ? 'due' : 'notDue',
-        targetState: 'ambiguous',
+        diagnostics: {
+          candidateCount: candidates.length,
+          candidateSummary: candidates.map((candidate) =>
+            this.toCandidateSummary(candidate.target),
+          ),
+        },
       };
     }
 
@@ -886,48 +900,10 @@ export class AnkiReviewBackend implements ReviewBackend {
 
     return {
       stateTags: candidate.stateTags,
-      mappingState: 'mapped',
+      resolutionStatus: 'resolved',
+      mappingOutcome: 'selected',
       dueState: candidate.dueState,
-      targetState: 'selected',
       target: candidate.target,
-    };
-  }
-
-  private async getEligibleAnkiTargets(
-    readonlyConfigs: DiscoverWordConfiguration[],
-  ): Promise<EligibleAnkiTargets> {
-    const [mining, blacklist, neverForget] = await Promise.all([
-      getConfiguration('ankiMiningConfig'),
-      getConfiguration('ankiBlacklistConfig'),
-      getConfiguration('ankiNeverForgetConfig'),
-    ]);
-    const decks = new Set<string>();
-    const models = new Set<string>();
-
-    for (const config of readonlyConfigs) {
-      if (config.deck?.trim().length) {
-        decks.add(config.deck.trim());
-      }
-
-      if (config.model?.trim().length) {
-        models.add(config.model.trim());
-      }
-    }
-
-    for (const config of [mining, blacklist, neverForget]) {
-      if (config.deck?.trim().length) {
-        decks.add(config.deck.trim());
-      }
-
-      if (config.model?.trim().length) {
-        models.add(config.model.trim());
-      }
-    }
-
-    return {
-      decks,
-      models,
-      templates: new Set(ELIGIBLE_TEMPLATE_ORDS),
     };
   }
 
@@ -992,6 +968,23 @@ export class AnkiReviewBackend implements ReviewBackend {
     return this.katakanaToHiragana(this.normaliseTextValue(flattened));
   }
 
+  private getTemplateName(modelName: string, ord: number): string | undefined {
+    const cached = this._modelTemplatesCache.get(modelName);
+    const templates = cached?.value;
+
+    return templates?.find((template) => template.ord === ord)?.name;
+  }
+
+  private toCandidateSummary(target: ReviewTargetMetadata): ReviewTargetCandidateSummary {
+    return {
+      ankiCardId: target.ankiCardId ?? 0,
+      ankiDeck: target.ankiDeck ?? '',
+      ankiModel: target.ankiModel ?? '',
+      ankiTemplateName: target.ankiTemplateName,
+      ankiTemplateOrd: target.ankiTemplateOrd ?? 0,
+    };
+  }
+
   private async getStateTagsForCard(
     card: Pick<AnkiCardInfo, 'cardId' | 'queue' | 'due'>,
   ): Promise<JitenCardState[]> {
@@ -1003,10 +996,15 @@ export class AnkiReviewBackend implements ReviewBackend {
 
   private getStateTags(queue: number, due: boolean, intervalDays?: number): JitenCardState[] {
     const stateTags: JitenCardState[] = [];
-    const schedulingState = this.getSchedulingState(queue, intervalDays);
+    const blockedState = this.getBlockedState(queue);
+    const schedulingState = blockedState ? undefined : this.getSchedulingState(queue, intervalDays);
 
     if (due) {
       stateTags.push(JitenCardState.DUE);
+    }
+
+    if (blockedState) {
+      stateTags.push(blockedState);
     }
 
     if (schedulingState) {
@@ -1014,6 +1012,16 @@ export class AnkiReviewBackend implements ReviewBackend {
     }
 
     return stateTags;
+  }
+
+  private getBlockedState(queue: number): JitenCardState | undefined {
+    if (queue === ANKI_QUEUE_SUSPENDED) {
+      return JitenCardState.SUSPENDED;
+    }
+
+    if (queue === ANKI_QUEUE_SIBLING_BURIED || queue === ANKI_QUEUE_MANUALLY_BURIED) {
+      return JitenCardState.BURIED;
+    }
   }
 
   private getSchedulingState(queue: number, intervalDays?: number): JitenCardState | undefined {
@@ -1030,6 +1038,12 @@ export class AnkiReviewBackend implements ReviewBackend {
 
   private mergeAmbiguousStateTags(candidates: AnkiTargetCandidate[]): JitenCardState[] {
     const hasDueCandidate = candidates.some((candidate) => candidate.dueState === 'due');
+    const hasSuspendedCandidate = candidates.some((candidate) =>
+      candidate.stateTags.includes(JitenCardState.SUSPENDED),
+    );
+    const hasBuriedCandidate = candidates.some((candidate) =>
+      candidate.stateTags.includes(JitenCardState.BURIED),
+    );
     const maturityStates = new Set<JitenCardState>();
 
     for (const candidate of candidates) {
@@ -1050,6 +1064,12 @@ export class AnkiReviewBackend implements ReviewBackend {
 
     if (hasDueCandidate) {
       stateTags.push(JitenCardState.DUE);
+    }
+
+    if (hasSuspendedCandidate) {
+      stateTags.push(JitenCardState.SUSPENDED);
+    } else if (hasBuriedCandidate) {
+      stateTags.push(JitenCardState.BURIED);
     }
 
     if (maturityStates.size === 1) {
@@ -1117,6 +1137,26 @@ export class AnkiReviewBackend implements ReviewBackend {
     );
   }
 
+  private async primeModelTemplates(modelNames: string[]): Promise<void> {
+    const now = Date.now();
+    const missingModels = modelNames.filter((modelName) => {
+      const cached = this._modelTemplatesCache.get(modelName);
+
+      return !cached || cached.expiresAt <= now;
+    });
+
+    await Promise.all(
+      missingModels.map(async (modelName) => {
+        const templates = await getModelTemplates(modelName, { showToastOnError: false });
+
+        this._modelTemplatesCache.set(modelName, {
+          expiresAt: now + LOOKUP_CACHE_TTL_MS,
+          value: templates,
+        });
+      }),
+    );
+  }
+
   private chunkIds(ids: number[]): number[][] {
     const chunks = [];
 
@@ -1168,18 +1208,25 @@ export class AnkiReviewBackend implements ReviewBackend {
   private createUnavailableResolution(): ReviewTermResolution {
     return {
       stateTags: [],
-      mappingState: 'unmapped',
+      resolutionStatus: 'backend-unavailable',
       dueState: 'unavailable',
-      targetState: 'none',
     };
   }
 
   private createUnmappedResolution(): ReviewTermResolution {
     return {
       stateTags: [JitenCardState.NEW],
-      mappingState: 'unmapped',
+      resolutionStatus: 'resolved',
+      mappingOutcome: 'none',
       dueState: 'unknown',
-      targetState: 'none',
+    };
+  }
+
+  private createConfigInsufficientResolution(): ReviewTermResolution {
+    return {
+      stateTags: [],
+      resolutionStatus: 'config-insufficient',
+      dueState: 'unknown',
     };
   }
 }

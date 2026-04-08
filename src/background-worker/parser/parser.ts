@@ -150,10 +150,11 @@ export class Parser {
         stateTags: cardState,
         freshness: 'stale',
         actionsAvailable: activeBackend.getCapabilities().supportsDeckActions,
-        mappingState: reviewResolution.mappingState,
+        resolutionStatus: reviewResolution.resolutionStatus,
+        mappingOutcome: reviewResolution.mappingOutcome,
         dueState: reviewResolution.dueState,
-        targetState: reviewResolution.targetState,
         target: reviewResolution.target,
+        diagnostics: reviewResolution.diagnostics,
       });
 
       return {
@@ -193,9 +194,9 @@ export class Parser {
 
     return {
       stateTags,
-      mappingState: 'mapped',
+      resolutionStatus: 'resolved',
+      mappingOutcome: 'selected',
       dueState: stateTags.includes(JitenCardState.DUE) ? 'due' : 'notDue',
-      targetState: 'selected',
       target: {
         key,
         wordId: vocabulary.wordId,
@@ -232,6 +233,23 @@ export class Parser {
         effectiveBackend: activeBackend,
       };
     } catch {
+      if (backendStatus.activeBackend === 'anki') {
+        return {
+          effectiveBackendStatus: backendStatus,
+          parseReviewStates: Object.fromEntries(
+            vocabulary.map((item) => [
+              `${item.wordId}/${item.readingIndex}`,
+              {
+                stateTags: [],
+                resolutionStatus: 'backend-unavailable' as const,
+                dueState: 'unavailable' as const,
+              },
+            ]),
+          ),
+          effectiveBackend: activeBackend,
+        };
+      }
+
       const jitenBackend = this.reviewBackendSelector.getBackend('jiten');
       const jitenParseStates = jitenBackend
         ? await jitenBackend.getParseReviewStates(vocabulary)

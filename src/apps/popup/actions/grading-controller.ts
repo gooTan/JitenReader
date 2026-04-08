@@ -96,17 +96,36 @@ export class GradingController extends BaseController {
   }
 
   private canSubmitGrade(card: JitenCard): boolean {
-    const { backend, targetState } = card.reviewMetadata;
+    const { backend, mappingOutcome, resolutionStatus } = card.reviewMetadata;
 
     if (backend !== 'anki') {
       return true;
     }
 
-    if (targetState === 'selected' && card.reviewMetadata.target?.ankiCardId) {
+    if (
+      resolutionStatus === 'resolved' &&
+      mappingOutcome === 'selected' &&
+      card.reviewMetadata.target?.ankiCardId
+    ) {
       return true;
     }
 
-    if (targetState === 'ambiguous') {
+    if (resolutionStatus === 'backend-unavailable') {
+      displayToast('error', 'Cannot review: Anki read-side status is unavailable right now.');
+
+      return false;
+    }
+
+    if (resolutionStatus === 'config-insufficient') {
+      displayToast(
+        'error',
+        'Cannot review: Anki read-side matching is not configured well enough.',
+      );
+
+      return false;
+    }
+
+    if (mappingOutcome === 'ambiguous') {
       displayToast('error', 'Cannot review: multiple Anki targets found for this term.');
 
       return false;

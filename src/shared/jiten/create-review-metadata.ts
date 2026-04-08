@@ -3,10 +3,11 @@ import {
   JitenReviewBackend,
   ReviewDueState,
   ReviewFreshnessState,
-  ReviewMappingState,
+  ReviewMappingOutcome,
   ReviewMetadata,
+  ReviewResolutionDiagnostics,
+  ReviewResolutionStatus,
   ReviewTargetMetadata,
-  ReviewTargetState,
 } from './types';
 
 type CreateReviewMetadataArgs = {
@@ -16,10 +17,11 @@ type CreateReviewMetadataArgs = {
   stateTags: JitenCardState[];
   freshness: ReviewFreshnessState;
   actionsAvailable: boolean;
-  mappingState?: ReviewMappingState;
+  resolutionStatus?: ReviewResolutionStatus;
+  mappingOutcome?: ReviewMappingOutcome;
   dueState?: ReviewDueState;
-  targetState?: ReviewTargetState;
   target?: ReviewTargetMetadata;
+  diagnostics?: ReviewResolutionDiagnostics;
 };
 
 export const createReviewMetadata = ({
@@ -29,34 +31,44 @@ export const createReviewMetadata = ({
   stateTags,
   freshness,
   actionsAvailable,
-  mappingState: providedMappingState,
+  resolutionStatus: providedResolutionStatus,
+  mappingOutcome: providedMappingOutcome,
   dueState: providedDueState,
-  targetState: providedTargetState,
   target: providedTarget,
+  diagnostics,
 }: CreateReviewMetadataArgs): ReviewMetadata => {
-  const mappingState = providedMappingState ?? (stateTags.length > 0 ? 'mapped' : 'unmapped');
+  const resolutionStatus = providedResolutionStatus ?? 'resolved';
   const dueState =
     providedDueState ??
     (stateTags.includes(JitenCardState.DUE)
       ? 'due'
-      : mappingState === 'mapped'
-        ? 'notDue'
-        : 'unknown');
-  const targetState = providedTargetState ?? (mappingState === 'mapped' ? 'selected' : 'none');
+      : resolutionStatus !== 'resolved'
+        ? resolutionStatus === 'backend-unavailable'
+          ? 'unavailable'
+          : 'unknown'
+        : providedTarget
+          ? 'notDue'
+          : 'unknown');
+  const mappingOutcome =
+    resolutionStatus === 'resolved'
+      ? (providedMappingOutcome ?? (providedTarget ? 'selected' : 'none'))
+      : undefined;
   const target =
     providedTarget ??
-    (mappingState === 'mapped'
+    (mappingOutcome === 'selected'
       ? { key: `${wordId}/${readingIndex}`, wordId, readingIndex }
       : undefined);
 
   return {
     backend,
-    mappingState,
+    resolutionStatus,
+    mappingOutcome,
     dueState,
-    targetState,
     target,
+    diagnostics,
     freshness,
-    actionsAvailable: actionsAvailable && targetState === 'selected',
+    actionsAvailable:
+      actionsAvailable && resolutionStatus === 'resolved' && mappingOutcome === 'selected',
     stateTags,
   };
 };

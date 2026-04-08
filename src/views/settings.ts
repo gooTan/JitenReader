@@ -1,5 +1,7 @@
 import { getApiVersion } from '@shared/anki/get-api-version';
 import { normalizeAnkiConnectUrl } from '@shared/anki/normalize-anki-connect-url';
+import { getReadonlyDiscoverWordConfigurationSummary } from '@shared/anki/readonly-config';
+import { DeckConfiguration, DiscoverWordConfiguration } from '@shared/anki/types';
 import { getConfiguration } from '@shared/configuration/get-configuration';
 import { getActiveProfileId } from '@shared/configuration/profiles-state';
 import { setConfiguration } from '@shared/configuration/set-configuration';
@@ -14,6 +16,7 @@ import { ConfigurationUpdatedCommand } from '@shared/messages/broadcast/configur
 import { ProfileSwitchedCommand } from '@shared/messages/broadcast/profile-switched.command';
 import { onBroadcastMessage } from '@shared/messages/receiving/on-broadcast-message';
 import { getThemeCssVars } from '@shared/theme/get-theme-css-vars';
+import { HTMLAnkiReadonlyConfigsElement } from './elements/html-anki-readonly-configs-element';
 import { HTMLFeaturesInputElement } from './elements/html-features-input-element';
 import { HTMLKeybindInputElement } from './elements/html-keybind-input-element';
 import { HTMLMiningInputElement } from './elements/html-mining-input-element';
@@ -24,6 +27,7 @@ import { HTMLProfileSelectorElement } from './elements/html-profile-selector-ele
 import { HTMLWordStyleEditorElement } from './elements/html-word-style-editor-element';
 
 customElements.define('mining-input', HTMLMiningInputElement);
+customElements.define('anki-readonly-configs', HTMLAnkiReadonlyConfigsElement);
 customElements.define('profile-selector', HTMLProfileSelectorElement);
 customElements.define('keybind-input', HTMLKeybindInputElement);
 customElements.define('parsers-input', HTMLParsersInputElement);
@@ -54,8 +58,9 @@ const fieldInitialisationTasks: Promise<void>[] = [];
 let settingsInitialisationComplete = false;
 let suppressNextAnkiUrlAutoRefresh = false;
 const SETTINGS_FIELD_SELECTOR =
-  'input, textarea, select, keybind-input, parsers-input, features-input, new-state-input, word-style-editor, mining-input';
+  'input, textarea, select, keybind-input, parsers-input, features-input, new-state-input, word-style-editor, mining-input, anki-readonly-configs';
 const ANKI_MINING_INPUT_IDS = ['ankiMiningConfig', 'ankiNeverForgetConfig', 'ankiBlacklistConfig'];
+const ANKI_READONLY_INPUT_ID = 'ankiReadonlyConfigs';
 
 type ConfigurationFieldElement = HTMLElement & {
   checked?: boolean;
@@ -70,8 +75,95 @@ const getAnkiMiningInputs = (): HTMLMiningInputElement[] =>
     (element): element is HTMLMiningInputElement => element instanceof HTMLMiningInputElement,
   );
 
+const getAnkiReadonlyInput = (): HTMLAnkiReadonlyConfigsElement | null => {
+  const element = document.getElementById(ANKI_READONLY_INPUT_ID);
+
+  return element instanceof HTMLAnkiReadonlyConfigsElement ? element : null;
+};
+
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : 'Unknown error';
+
+const getLocalDeckConfiguration = (
+  key: keyof Pick<
+    ConfigurationSchema,
+    'ankiMiningConfig' | 'ankiBlacklistConfig' | 'ankiNeverForgetConfig'
+  >,
+): DeckConfiguration => {
+  return (
+    (localConfiguration.get(key) as DeckConfiguration | undefined) ?? {
+      deck: '',
+      model: '',
+      proxy: false,
+      wordField: '',
+      readingField: '',
+      cardTemplateOrds: [],
+      templateTargets: [],
+    }
+  );
+};
+
+const getLocalReadonlyConfigurations = (): DiscoverWordConfiguration[] => {
+  return (
+    (localConfiguration.get('ankiReadonlyConfigs') as DiscoverWordConfiguration[] | undefined) ?? []
+  );
+};
+
+const renderAnkiReadonlySummary = (): void => {
+  const container = document.getElementById('anki-readonly-summary');
+
+  if (!container) {
+    return;
+  }
+
+  const summary = getReadonlyDiscoverWordConfigurationSummary({
+    explicitConfigs: getLocalReadonlyConfigurations(),
+    blacklistConfig: getLocalDeckConfiguration('ankiBlacklistConfig'),
+    miningConfig: getLocalDeckConfiguration('ankiMiningConfig'),
+    neverForgetConfig: getLocalDeckConfiguration('ankiNeverForgetConfig'),
+  });
+  const summaryItems =
+    summary.derivedConfigs.length > 0
+      ? summary.derivedConfigs.map(({ config, source }) => {
+          const templateLabel =
+            config.templateOrds.length > 0
+              ? config.templateOrds.map((ord) => `ord ${ord}`).join(', ')
+              : 'all templates';
+          const deckLabel = config.deck.length > 0 ? config.deck : 'all decks';
+          const readingLabel =
+            config.readingField.length > 0 ? config.readingField : 'no reading field';
+
+          return `${source}: ${config.model} / ${config.wordField} / ${readingLabel} / ${deckLabel} / ${templateLabel}`;
+        })
+      : ['No derived read-side configs are currently available.'];
+  const issueItems =
+    summary.issues.length > 0
+      ? summary.issues.map((issue) => `${issue.source}: ${issue.code}`)
+      : [];
+
+  container.replaceChildren(
+    createElement('div', {
+      children: summaryItems.map((item) =>
+        createElement('p', {
+          style: { marginBottom: '0.4em', opacity: '0.8' },
+          innerText: item,
+        }),
+      ),
+    }),
+    ...(issueItems.length > 0
+      ? [
+          createElement('div', {
+            children: issueItems.map((item) =>
+              createElement('p', {
+                style: { marginBottom: '0.4em', color: '#f0b070' },
+                innerText: `Issue: ${item}`,
+              }),
+            ),
+          }),
+        ]
+      : []),
+  );
+};
 
 const applyAnkiFetchUrl = (ankiUrl: string): void => {
   let normalized = '';
@@ -84,6 +176,12 @@ const applyAnkiFetchUrl = (ankiUrl: string): void => {
 
   for (const input of getAnkiMiningInputs()) {
     input.fetchUrl = normalized;
+  }
+
+  const readonlyInput = getAnkiReadonlyInput();
+
+  if (readonlyInput) {
+    readonlyInput.fetchUrl = normalized;
   }
 };
 
@@ -110,6 +208,7 @@ const syncAnkiInputsFromUrl = async (ankiUrl: string, showFailureToast: boolean)
 
   try {
     await refreshAnkiMiningInputs(normalizedAnkiUrl);
+    await getAnkiReadonlyInput()?.refreshFromUrl(normalizedAnkiUrl);
   } catch (error) {
     if (showFailureToast) {
       displayToast(
@@ -246,6 +345,7 @@ withElements(SETTINGS_FIELD_SELECTOR, (field: ConfigurationFieldElement) => {
 
 void Promise.allSettled(fieldInitialisationTasks).then(() => {
   settingsInitialisationComplete = true;
+  renderAnkiReadonlySummary();
 
   const ankiEnabled = localConfiguration.get('enableAnkiIntegration') === true;
   const ankiUrl = localConfiguration.get('ankiUrl');
@@ -310,8 +410,11 @@ withElement('#ankiUrlButton', (button: HTMLInputElement) => {
         try {
           await getApiVersion({ ankiConnectUrl: normalizedAnkiUrl, showToastOnError: false });
           applyAnkiFetchUrl(normalizedAnkiUrl);
-          await refreshAnkiMiningInputs(normalizedAnkiUrl);
-          displayToast('success', 'Anki endpoint is reachable and deck settings were refreshed');
+          await syncAnkiInputsFromUrl(normalizedAnkiUrl, true);
+          displayToast(
+            'success',
+            'Anki endpoint is reachable and deck/model/template selectors were refreshed',
+          );
         } catch (error) {
           displayToast('error', `Failed to reach Anki endpoint: ${getErrorMessage(error)}`);
         }
@@ -431,6 +534,15 @@ function afterValueUpdated(
     if (typeof currentAnkiUrl === 'string' && currentAnkiUrl.length) {
       void syncAnkiInputsFromUrl(currentAnkiUrl, true);
     }
+  }
+
+  if (
+    key === 'ankiMiningConfig' ||
+    key === 'ankiBlacklistConfig' ||
+    key === 'ankiNeverForgetConfig' ||
+    key === 'ankiReadonlyConfigs'
+  ) {
+    renderAnkiReadonlySummary();
   }
 
   updateBindings(key);
