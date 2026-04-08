@@ -1952,3 +1952,733 @@ pm run build passes.
 - Handoff:
   - Requested Anki new-state behavior is now implemented in backend mapping and refresh paths.
   - If any mismatch remains in UI, next likely surface is stale registry state or cache-refresh timing rather than backend classification.
+
+### 2026-04-08 - Stage Planning Start-of-Run (Draft Stage 10 Stage Document)
+- Stage:
+  - Stage planning follow-up after Stage 9.
+- Plan for this run:
+  - Draft a new `docs/stages/` stage document for Stage 10 based on the identified Anki gaps.
+  - Keep the stage focused on Anki read-side identity: readonly config strategy, card-template selection, and surfaced suspended/buried states.
+  - Match the existing stage-doc style and level of detail used in prior stage files.
+- Prerequisite observations:
+  - Stage 9 follow-up work clarified several unresolved gaps that are better handled in a new stage rather than extending Stage 9.
+  - Existing stage docs use concise but explicit sections: objective, scope, deliverables, non-goals, acceptance criteria, and handoff.
+- Risks/assumptions carried in:
+  - Assumption: Stage 10 should focus on read/match correctness and config surface, not yet the add-then-rate lifecycle.
+  - Risk: stage scope could sprawl into refresh/write UX; mitigation is to keep Stage 10 limited to identity and state-surfacing foundations.
+
+### 2026-04-08 - Stage Planning Implementation (Draft Stage 10 Stage Document)
+- Completed:
+  - Added a new stage document for Stage 10 focused on Anki read-side identity foundations.
+  - Captured the intended scope for:
+    - read-only config strategy
+    - card-template selection instead of implicit Card 1 filtering
+    - surfaced `suspended` / `buried` states
+    - deterministic mapping and ambiguity rules
+  - Matched the existing `docs/stages/` structure and style used by prior stage documents.
+- Files changed:
+  - `docs/stages/stage_10_complete_anki_read_side_identity.md`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Stage 10 should stay focused on Anki read/match correctness and configuration surface, not yet the add-then-rate lifecycle or deeper refresh/performance stages.
+  - Auto-derived readonly config plus optional explicit advanced override is the recommended policy direction captured in the stage doc.
+- Blockers / open issues:
+  - No active blocker for the documentation run.
+  - Future implementation will still need a decision on exact config representation for card template selection (`ord`, name, or hybrid).
+- Verification status:
+  - Read back the new stage file and verified structure/content alignment with existing stage documents.
+  - No runtime/build verification was needed for this documentation-only run.
+- Next recommended step:
+  - Use `docs/stages/stage_10_complete_anki_read_side_identity.md` as the next implementation stage entry point.
+- Handoff:
+  - Stage 10 planning artifact is now on disk.
+  - Next run should read the working log, `docs/stage_execution_protocol.md`, and `docs/stages/stage_10_complete_anki_read_side_identity.md` before implementation.
+
+### 2026-04-08 - Stage Planning Start-of-Run (Draft Stage 11 Stage Document)
+- Stage:
+  - Stage planning follow-up after Stage 10.
+- Current implementation state:
+  - Stage 9 established targeted refresh, stale-state handling, backend status, and hybrid fallback boundaries.
+  - Stage 10 planning captured the next foundational work: explicit Anki read-side config strategy, configurable card-template selection, and surfaced `suspended` / `buried` states.
+  - The next unresolved gap is user-facing action gating: the system can detect blocked or ambiguous situations more accurately than before, but popup/grading UX still needs a dedicated stage definition.
+- Plan for this run:
+  - Draft a new `docs/stages/` stage document for Stage 11.
+  - Keep the stage focused on blocked-state UX and action gating for Anki-backed review interactions.
+  - Define the expected behavior for ambiguous, unmapped, suspended, and buried targets without spilling into Stage 12 add-then-rate work.
+- Prerequisite observations:
+  - Current UX still relies too much on click-time failure handling instead of pre-emptive action gating.
+  - The user wants ambiguous targets treated as a clear error and suspended / buried cards to be visibly blocked until resolved in Anki.
+- Risks/assumptions carried in:
+  - Assumption: Stage 11 should consume Stage 10 identity outputs rather than redefine matching logic.
+  - Risk: scope could drift into refresh, recovery, or new-card lifecycle work; mitigation is to keep this document centred on popup/action rules only.
+
+### 2026-04-08 - Stage Planning Implementation (Draft Stage 11 Stage Document)
+- Completed:
+  - Added a new stage document for Stage 11 focused on Anki action gating and blocked-state UX.
+  - Captured the intended scope for:
+    - popup-level gating before rating is attempted
+    - explicit blocked-state handling for `none`, `ambiguous`, `suspended`, and `buried`
+    - preserved backend-side safety checks even when UI gating is present
+    - a concrete action-gating matrix so later implementation has deterministic rules
+  - Kept the stage intentionally separate from Stage 12 add-then-rate lifecycle work and later refresh/performance stages.
+- Files changed:
+  - `docs/stages/stage_11_implement_action_gating_and_blocked_state_ux.md`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Stage 11 should consume Stage 10 identity outputs rather than reopen matching/config design decisions.
+  - Blocked review situations should be communicated before click, with grading controls hidden, disabled, or replaced by a clear blocked-state explanation.
+  - Ambiguous Anki targets should remain a hard blocked state with no auto-selection and no silent fallback.
+- Blockers / open issues:
+  - No active blocker for the documentation run.
+  - Future implementation will still need a concrete UI decision on whether blocked controls are hidden or disabled in the popup, but the stage doc leaves both acceptable if the explanation is explicit.
+- Verification status:
+  - Read back the new stage file and verified structure/content alignment with the existing stage-doc pattern.
+  - No runtime/build verification was needed for this documentation-only run.
+- Next recommended step:
+  - Use `docs/stages/stage_11_implement_action_gating_and_blocked_state_ux.md` as the implementation entry point after Stage 10 work is complete.
+- Handoff:
+  - Stage 11 planning artifact is now on disk.
+  - The next planning docs in sequence should cover Stage 12 add-then-rate lifecycle and Stage 13 refresh/failure-recovery hardening.
+
+### 2026-04-08 - Stage Planning Start-of-Run (Draft Stage 12 Stage Document)
+- Stage:
+  - Stage planning follow-up after Stage 11.
+- Current implementation state:
+  - Stage 9 established targeted refresh, stale-state handling, backend status, and hybrid fallback boundaries.
+  - Stage 10 planning defined the read-side identity foundation: readonly config strategy, card-template selection, and surfaced `suspended` / `buried` states.
+  - Stage 11 planning defined popup action gating for blocked and ambiguous Anki states.
+  - The next unresolved gap is the Anki-first lifecycle for `new` and not-yet-mapped terms: the system can identify those states, but it still needs a robust workflow for direct rating of mapped new cards and add-then-rate handling for unmapped terms.
+- Plan for this run:
+  - Draft a new `docs/stages/` stage document for Stage 12.
+  - Keep the stage focused on the new-card review lifecycle in Anki mode:
+    - rate existing mapped `new` cards directly in Anki
+    - add unmapped terms to Anki and immediately apply the chosen rating
+    - refresh back to authoritative Anki state afterwards
+  - Keep broader refresh/failure-recovery hardening scoped for the later Stage 13 document.
+- Prerequisite observations:
+  - User expectation is that when Anki is the backend, Anki should remain the sole source of truth for scheduling.
+  - A new-card lifecycle that silently falls back to Jiten or guesses created card identity would be too fragile.
+- Risks/assumptions carried in:
+  - Assumption: Stage 12 should build on Stage 10 identity and Stage 11 gating rather than redefining blocked-state UX.
+  - Risk: scope could sprawl into full recovery/scheduler work; mitigation is to keep this doc centred on add/rate transaction design and immediate post-write truth from Anki only.
+
+### 2026-04-08 - Stage Planning Implementation (Draft Stage 12 Stage Document)
+- Completed:
+  - Added a new stage document for Stage 12 focused on the Anki-first new-card lifecycle.
+  - Captured the intended scope for:
+    - direct review of mapped Anki `new` cards
+    - add-then-rate workflow for unmapped terms
+    - deterministic write-target resolution
+    - exact created-card identity and authoritative post-write state from Anki
+    - idempotency and duplicate-click protection for first-review interactions
+  - Kept the stage intentionally separate from Stage 13 failure-recovery and broader refresh-scheduler work.
+- Files changed:
+  - `docs/stages/stage_12_implement_anki_new_card_lifecycle.md`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Stage 12 should treat new-card review as a backend-owned transaction rather than a fragile sequence of frontend-orchestrated steps.
+  - Add-then-rate must never rely on fuzzy rematching to discover which created card to review.
+  - Only popup actions with explicit Anki semantics should be allowed to participate in the Anki new-card lifecycle.
+- Blockers / open issues:
+  - No active blocker for the documentation run.
+  - Future implementation will still need a concrete decision on whether to extend the current targeted review endpoint or introduce a dedicated create-or-review contract.
+- Verification status:
+  - Read back the new stage file and verified structure/content alignment with the current stage-doc pattern.
+  - No runtime/build verification was needed for this documentation-only run.
+- Next recommended step:
+  - Use `docs/stages/stage_12_implement_anki_new_card_lifecycle.md` as the implementation entry point after Stage 10 and Stage 11 work is complete.
+- Handoff:
+  - Stage 12 planning artifact is now on disk.
+  - The next planning document in sequence should cover Stage 13 failure transparency, stale-state recovery, and refresh hardening.
+
+### 2026-04-08 - Stage Planning Start-of-Run (Draft Stage 13 Stage Document)
+- Stage:
+  - Stage planning follow-up after Stage 12.
+- Current implementation state:
+  - Stage 9 established the first version of targeted refresh, stale-state handling, backend status, and clean interaction-boundary fallback.
+  - Stage 10 planning defined the identity foundation needed for trustworthy Anki-backed matching and surfaced blocked states.
+  - Stage 11 planning defined blocked-state gating so invalid Anki actions are stopped before click.
+  - Stage 12 planning defined the Anki-first new-card lifecycle, including direct review of mapped `new` cards and add-then-rate for unmapped terms.
+  - The next unresolved gap is how the system behaves when writes partially succeed, refresh is uncertain, or page state drifts over time after parse/write boundaries.
+- Plan for this run:
+  - Draft a new `docs/stages/` stage document for Stage 13.
+  - Keep the stage focused on:
+    - failure transparency after Anki-backed actions
+    - stale-state recovery rules
+    - targeted refresh hardening and scheduled revalidation boundaries
+  - Keep deeper parse-time traffic reduction and bulk resolution work scoped for later performance stages.
+- Prerequisite observations:
+  - User expectation is that Anki remains the source of truth even when refresh fails or the backend becomes temporarily unavailable.
+  - The add-then-rate lifecycle is not enough by itself; the UX also needs to explain uncertain outcomes and offer safe recovery paths.
+- Risks/assumptions carried in:
+  - Assumption: Stage 13 should build on the transaction model from Stage 12 rather than redesigning add/rate itself.
+  - Risk: scope could drift into general performance redesign; mitigation is to keep this doc centred on post-write truth, refresh boundaries, and recovery behaviour only.
+
+### 2026-04-08 - Stage Planning Implementation (Draft Stage 13 Stage Document)
+- Completed:
+  - Added a new stage document for Stage 13 focused on failure transparency, stale-state recovery, and refresh hardening for Anki-backed actions.
+  - Captured the intended scope for:
+    - explicit failure taxonomy
+    - explicit stale-state taxonomy
+    - targeted refresh boundaries after write, on retry, on visibility/focus return, on time boundaries, and on backend reconnection
+    - user-visible recovery UX for uncertain or stale Anki state
+    - cache invalidation policy aligned with Anki as source of truth
+  - Kept the stage intentionally separate from later parse-time and localhost-call performance redesign.
+- Files changed:
+  - `docs/stages/stage_13_implement_failure_transparency_stale_state_recovery_and_refresh_hardening.md`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Stage 13 should distinguish definite failure, uncertain outcome, and confirmed-write-but-stale-refresh rather than collapsing them into one generic error.
+  - State quality should become explicit (`fresh`, `pending-write`, `refreshing`, stale variants, unavailable) so the UI can safely block further actions under uncertainty.
+  - Refresh hardening should be targeted and boundary-driven, not implemented as broad polling or full-page reparsing by default.
+- Blockers / open issues:
+  - No active blocker for the documentation run.
+  - Future implementation will still need concrete product decisions on exactly which stale-quality states allow guarded actions versus fully disabled actions.
+- Verification status:
+  - Read back the new stage file and verified structure/content alignment with the current stage-doc pattern and prior handoffs.
+  - No runtime/build verification was needed for this documentation-only run.
+- Next recommended step:
+  - Use `docs/stages/stage_13_implement_failure_transparency_stale_state_recovery_and_refresh_hardening.md` as the implementation entry point after Stage 12 work is complete.
+- Handoff:
+  - Stage 13 planning artifact is now on disk.
+  - The next planning documents in sequence should cover low-risk performance cleanup and then bulk Anki resolution / endpoint consolidation.
+
+### 2026-04-08 - Stage Planning Start-of-Run (Stage 11 / Stage 12 Consistency Correction)
+- Stage:
+  - Documentation correction across Stage 11 and Stage 12 planning.
+- Current implementation state:
+  - Stage 11 currently describes `none` as a blocked popup state with grading unavailable.
+  - Stage 12 correctly describes the intended Anki-first lifecycle for unmapped terms: if exactly one valid write target exists, the user should still be able to grade and trigger add-then-rate in a single transaction.
+  - This leaves a documentation inconsistency in the planning sequence.
+- Plan for this run:
+  - Correct Stage 11 so it does not describe `none` as permanently blocked.
+  - Clarify that `none` should become reviewable when a valid Stage 12 add-then-rate path exists, and blocked only when no valid write path is available.
+  - Keep the correction limited to documentation alignment rather than expanding stage scope.
+- Prerequisite observations:
+  - The intended product behaviour is Anki-first for both mapped `new` cards and not-yet-mapped terms.
+  - Stage 11 should define gating rules that remain compatible with Stage 12 rather than forcing a contradictory interpretation.
+- Risks/assumptions carried in:
+  - Assumption: Stage 11 should remain primarily about blocked-state UX, with `none` handled as a conditional path that later hands off into Stage 12 lifecycle work.
+  - Risk: over-correcting Stage 11 into a full Stage 12 implementation spec; mitigation is to only change the `none` semantics needed for consistency.
+
+### 2026-04-08 - Stage Planning Implementation (Stage 11 / Stage 12 Consistency Correction)
+- Completed:
+  - Corrected the Stage 11 doc so `none` is no longer described as a permanently blocked Anki state.
+  - Updated Stage 11 to distinguish:
+    - `none` with a valid create path
+    - `none` with no valid create path
+  - Aligned Stage 11 wording, gating matrix, acceptance criteria, and verification expectations with the intended Stage 12 add-then-rate lifecycle.
+- Files changed:
+  - `docs/stages/stage_11_implement_action_gating_and_blocked_state_ux.md`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - In the intended full design, "not found in Anki" is conditionally reviewable rather than inherently blocked.
+  - `none` should remain reviewable when exactly one valid Anki create-and-rate path exists, and blocked only when no valid write path exists.
+  - Stage 11 should stay compatible with Stage 12 rather than freezing a contradictory UX assumption into the plan.
+- Blockers / open issues:
+  - No active blocker for the documentation correction.
+  - Future implementation will still need a concrete product choice on whether Stage 11-alone UI blocks `none` until Stage 12 ships, or whether the two stages are implemented closely enough that the add-path appears immediately.
+- Verification status:
+  - Read back the revised Stage 11 doc and confirmed it now aligns with the Stage 12 lifecycle doc.
+  - No runtime/build verification was needed for this documentation-only correction.
+- Next recommended step:
+  - Use the revised Stage 11 doc as the authoritative gating plan going forward, with `none` treated as conditional on valid Anki create-path availability.
+- Handoff:
+  - The Stage 11 / Stage 12 planning conflict has been resolved in repo docs.
+  - The next run should read the working log and revised Stage 11 doc before any implementation based on `none` target semantics.
+
+### 2026-04-08 - Stage Planning Start-of-Run (Stage 12 Sentence Capture Clarification)
+- Stage:
+  - Documentation clarification for Stage 12 Anki new-card lifecycle planning.
+- Current implementation state:
+  - Jiten-side mining already supports optional sentence attachment after add when `setSentences` is enabled.
+  - Popup/mining plumbing already carries the sentence from parsed token context down to backend deck-action handling.
+  - Anki-side configuration already exposes `sentence` and `sentenceSanitized` template targets in settings.
+  - However, the current Stage 12 doc does not yet explicitly require sentence/context field population when a new Anki card is created.
+- Plan for this run:
+  - Update Stage 12 so sentence/context capture is explicitly part of the Anki add-then-rate lifecycle.
+  - Record that Anki note creation should populate configured sentence-related template fields when sentence context is available.
+  - Capture the need for shared note-field materialization rather than duplicating ad hoc field-building logic.
+- Prerequisite observations:
+  - There is no current shared helper that materializes `templateTargets` into actual Anki note field values.
+  - The current Anki review backend still reports `supportsDeckActions: false` and does not implement Anki-side note creation yet.
+- Risks/assumptions carried in:
+  - Assumption: sentence/context-on-create belongs in Stage 12 because it is part of the note-creation transaction, not merely a later refresh concern.
+  - Risk: over-specifying sentence sanitization details before implementation; mitigation is to require the capability and shared helper direction without locking every transformation rule yet.
+
+### 2026-04-08 - Stage Planning Implementation (Stage 12 Sentence Capture Clarification)
+- Completed:
+  - Updated the Stage 12 doc so sentence/context capture is explicitly part of the Anki add-then-rate lifecycle.
+  - Added explicit requirements for:
+    - carrying parsed sentence/context into note creation when available
+    - populating configured `sentence` / `sentenceSanitized` template targets
+    - introducing a shared note-field materialization helper for Anki card creation
+  - Verified the update against existing code realities:
+    - Jiten-side mining already supports optional sentence attachment
+    - Anki-side settings already expose sentence-related template targets
+    - current Anki review backend does not yet implement Anki-side deck actions or note creation
+- Files changed:
+  - `docs/stages/stage_12_implement_anki_new_card_lifecycle.md`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Sentence/context-on-create belongs in Stage 12 because it is part of the note-creation transaction.
+  - The reusable/shared part should be note-field materialization, not Jiten's API-specific add logic.
+  - Sentence-derived Anki fields should be populated deterministically when configured, and resolve to a defined fallback when sentence context is unavailable.
+- Blockers / open issues:
+  - No active blocker for the documentation clarification.
+  - There is still no existing shared helper for `templateTargets`, so implementation will need to introduce one.
+  - Exact sanitization rules for `sentenceSanitized` remain to be defined during implementation.
+- Verification status:
+  - Read back the revised Stage 12 doc and confirmed it now reflects the existing codebase signals and intended product behaviour.
+  - No runtime/build verification was needed for this documentation/code-exploration run.
+- Next recommended step:
+  - Treat sentence/context-aware field materialization as a first-class Stage 12 implementation requirement.
+- Handoff:
+  - Stage 12 now explicitly includes sentence capture for newly created Anki cards.
+  - The next implementation run should inspect Jiten sentence plumbing and Anki template-target config together before building the shared field-materialization helper.
+
+### 2026-04-08 - Stage Planning Start-of-Run (Stage 12 Reuse-Focused Refinement)
+- Stage:
+  - Documentation refinement for Stage 12 implementation guidance.
+- Current implementation state:
+  - Stage 12 already covers Anki add-then-rate, exact created-card identity, and sentence/context capture for newly created Anki notes.
+  - Code exploration confirmed that Jiten-side mining already provides reusable plumbing for:
+    - popup/context sentence capture
+    - mining action orchestration
+    - backend-selection routing
+    - optional sentence attachment semantics
+  - Code exploration also confirmed that Anki-side mining still lacks:
+    - deck-action support
+    - note creation
+    - shared `templateTargets` field materialization
+- Plan for this run:
+  - Refine Stage 12 to explicitly prefer reuse of existing Jiten mining pipeline components where possible.
+  - Add more concrete implementation recommendations so future implementation minimizes duplication and keeps Anki-specific code limited to the creation/rating transaction boundary.
+  - Keep the refinement documentation-only and scoped to Stage 12.
+- Prerequisite observations:
+  - The strongest reusable layer is not Jiten's API mutation itself, but the higher-level mining pipeline and context plumbing around it.
+  - The major missing shared abstraction is a field-materialization helper for `templateTargets`.
+- Risks/assumptions carried in:
+  - Assumption: `setSentences` should remain the governing user preference for sentence attachment semantics across both backends unless later product decisions change that.
+  - Risk: over-prescribing exact file-level implementation before coding begins; mitigation is to recommend likely reuse/extraction points without turning the stage doc into a patch plan.
+
+### 2026-04-08 - Stage Planning Implementation (Stage 12 Reuse-Focused Refinement)
+- Completed:
+  - Refined the Stage 12 doc to explicitly require a reuse-first implementation approach for Anki note creation.
+  - Added concrete recommendations that Stage 12 should:
+    - reuse existing popup/context sentence plumbing
+    - reuse existing mining/action orchestration concepts where possible
+    - extract shared note-field materialization logic instead of duplicating template-target handling
+    - keep backend-specific code limited to the final persistence/transaction boundary
+  - Added an explicit implementation strategy section separating:
+    - logic to reuse directly
+    - logic to extract into shared helpers
+    - logic that must remain backend-specific
+- Files changed:
+  - `docs/stages/stage_12_implement_anki_new_card_lifecycle.md`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - The reusable/shared part of Anki creation should be upstream orchestration and note-field materialization, not Jiten's API-specific mutation calls.
+  - Sentence attachment semantics should stay as consistent as possible across Jiten and Anki, with `setSentences` as the default governing preference unless implementation finds a hard reason to diverge.
+  - Stage 12 should establish a shared creation/materialization layer that future Anki mining/create flows can reuse instead of spawning multiple field-building code paths.
+- Blockers / open issues:
+  - No active blocker for the documentation refinement.
+  - Implementation will still need to decide the exact shared-helper API and where it lives.
+  - `sentenceSanitized` still needs concrete transformation rules during implementation.
+- Verification status:
+  - Read back the revised Stage 12 doc and confirmed that reuse-first guidance, sentence capture, and implementation recommendations are all now explicit.
+  - No runtime/build verification was needed for this documentation-only refinement.
+- Next recommended step:
+  - Use the revised Stage 12 doc as the implementation guide, especially the new reuse-first and shared-helper requirements.
+- Handoff:
+  - Stage 12 now explicitly directs implementation to minimize duplication with the existing Jiten mining pipeline.
+  - The next implementation run should inspect the popup sentence plumbing, `RunDeckAction` flow, and Anki deck config together before writing any new create-path code.
+
+### 2026-04-08 - Stage Planning Start-of-Run (Draft Stage 14A Stage Document)
+- Stage:
+  - Stage planning follow-up after Stage 13.
+- Current implementation state:
+  - Stage 13 planning defined how stale-state recovery and refresh hardening should preserve Anki as source of truth under uncertainty.
+  - Earlier performance work in Stage 7B focused on parse-time batching/caching for Anki mapping, but later Anki features introduced new request overhead and repeated localhost traffic that now needs a dedicated low-risk cleanup pass.
+  - The next unresolved gap is reducing avoidable localhost calls and repeated work without changing core mapping, write, or refresh semantics.
+- Plan for this run:
+  - Draft a new `docs/stages/` stage document for Stage 14A.
+  - Keep the stage focused on low-risk Anki performance cleanup:
+    - duplicated probe removal
+    - in-flight dedupe
+    - cache invalidation tightening
+    - better reuse of authoritative post-write payloads
+    - request batching improvements that do not require a new add-on endpoint
+  - Keep bulk endpoint redesign and larger contract consolidation scoped for the later Stage 14B document.
+- Prerequisite observations:
+  - The low-risk gains are now mostly about cutting duplicated request overhead rather than rethinking matching semantics.
+  - Stage 14A should preserve all Stage 10-13 behavioural guarantees while making localhost traffic and refresh work less wasteful.
+- Risks/assumptions carried in:
+  - Assumption: Stage 14A should avoid changing user-visible semantics or backend contracts unless a change is purely additive and low risk.
+  - Risk: performance work can accidentally blur into Stage 14B endpoint redesign; mitigation is to keep this stage strictly to incremental request-shape, cache, and refresh-path improvements.
+
+### 2026-04-08 - Stage Planning Implementation (Draft Stage 14A Stage Document)
+- Completed:
+  - Added a new stage document for Stage 14A focused on low-risk Anki performance cleanup.
+  - Captured the intended scope for:
+    - duplicate probe removal
+    - in-flight dedupe for overlapping read/refresh work
+    - post-write response reuse
+    - tighter cache invalidation for scheduler-relevant data
+    - low-risk request grouping improvements using the current API surface
+  - Kept the stage intentionally separate from Stage 14B bulk endpoint redesign and contract consolidation.
+- Files changed:
+  - `docs/stages/stage_14A_apply_low_risk_anki_performance_cleanup.md`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Stage 14A should optimize request reuse and cache behaviour while keeping Stage 10-13 semantics unchanged.
+  - The highest-value low-risk optimizations are now duplicate probe removal, promise-aware dedupe, response reuse, and full scheduler-relevant cache invalidation after writes.
+  - Any improvement that requires a new custom add-on endpoint belongs to Stage 14B rather than Stage 14A.
+- Blockers / open issues:
+  - No active blocker for the documentation run.
+  - Future implementation will still need to decide the exact ownership model for in-flight promise caches and targeted refresh dedupe.
+- Verification status:
+  - Read back the new stage file and verified structure/content alignment with the current stage-doc pattern and prior handoffs.
+  - No runtime/build verification was needed for this documentation-only run.
+- Next recommended step:
+  - Use `docs/stages/stage_14A_apply_low_risk_anki_performance_cleanup.md` as the implementation entry point before drafting or implementing Stage 14B.
+- Handoff:
+  - Stage 14A planning artifact is now on disk.
+  - The next planning document in sequence should cover Stage 14B bulk Anki resolution and larger request-contract consolidation.
+
+### 2026-04-08 - Stage Planning Start-of-Run (Draft Stage 14B Stage Document)
+- Stage:
+  - Stage planning follow-up after Stage 14A.
+- Current implementation state:
+  - Stage 14A planning deliberately constrained performance work to low-risk request reuse, in-flight dedupe, cache invalidation tightening, and better use of existing authoritative payloads.
+  - The remaining high-impact performance gap is architectural: parse-time and targeted-refresh read paths still depend on many localhost round trips because the extension must compose multiple AnkiConnect actions (`findNotes`, `notesInfo`, `cardsInfo`, `getIntervals`) into one logical resolution step.
+  - The next unresolved gap is collapsing that multi-request pipeline into a smaller number of purpose-built, versioned contracts without losing fallback safety or Stage 10-13 behavioural guarantees.
+- Plan for this run:
+  - Draft a new `docs/stages/` stage document for Stage 14B.
+  - Keep the stage focused on:
+    - bulk Anki term-resolution endpoint design
+    - larger request-contract consolidation for high-value read/refresh flows
+    - safe rollout/fallback from current low-level request composition to new versioned add-on actions
+  - Keep unrelated UI and scheduler-semantic changes out of scope.
+- Prerequisite observations:
+  - Stage 14B is the first stage in this sequence where introducing new custom add-on endpoints is explicitly allowed.
+  - The primary motivation is to collapse localhost traffic at the contract level rather than chase diminishing returns inside the current API surface.
+- Risks/assumptions carried in:
+  - Assumption: a versioned custom add-on endpoint family is acceptable as long as fallback to the existing pipeline remains available during rollout.
+  - Risk: contract redesign can accidentally entangle parse-time resolution, refresh, and write flows too aggressively; mitigation is to keep the new contract family focused on the highest-value read-side collapses first and preserve clear versioning boundaries.
+
+### 2026-04-08 - Stage Planning Implementation (Draft Stage 14B Stage Document)
+- Completed:
+  - Added a new stage document for Stage 14B focused on bulk Anki resolution and larger request-contract consolidation.
+  - Captured the intended scope for:
+    - a primary versioned bulk term-resolution endpoint
+    - optional paired bulk target-refresh endpoint
+    - moving high-cost read-side joining/filtering/state assembly closer to the collection
+    - safe capability detection and fallback to the Stage 14A path during rollout
+    - explicit parity verification between old and new resolution paths
+  - Kept the stage intentionally separate from UI redesign, scheduler-semantics changes, and broad mutation-endpoint redesign.
+- Files changed:
+  - `docs/stages/stage_14B_implement_bulk_anki_resolution_and_contract_consolidation.md`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Stage 14B should introduce a purpose-built bulk term-resolution contract as the primary performance win rather than extending low-level request composition indefinitely.
+  - A paired bulk target-refresh endpoint is optional and should only be added if it materially simplifies Stage 13 recovery/refresh traffic.
+  - Safe fallback to the Stage 14A path must remain available until output parity with the new contract is established.
+- Blockers / open issues:
+  - No active blocker for the documentation run.
+  - Future implementation will still need to decide whether targeted refresh consolidation is worth a second endpoint in the first 14B pass or should follow after the primary bulk term-resolution endpoint lands.
+- Verification status:
+  - Read back the new stage file and verified structure/content alignment with the current stage-doc pattern and the Stage 14A handoff boundary.
+  - No runtime/build verification was needed for this documentation-only run.
+- Next recommended step:
+  - Use `docs/stages/stage_14B_implement_bulk_anki_resolution_and_contract_consolidation.md` as the implementation entry point after any Stage 14A work is complete.
+- Handoff:
+  - Stage 14B planning artifact is now on disk.
+  - The next implementation run should read the working log, Stage 14A doc, and Stage 14B doc before designing the new add-on contract or rollout path.
+
+### 2026-04-08 - Stage Planning Start-of-Run (Audit Stage 10-14B Docs For Clarity And Consistency)
+- Stage:
+  - Cross-stage documentation audit for Stage 10 through Stage 14B.
+- Current implementation state:
+  - Stage 10 defines the Anki read-side identity foundation: deterministic read-only lookup config handling, configurable card-template selection instead of implicit Card 1 matching, and surfaced blocked read-side states such as `suspended` and `buried`.
+  - Stage 11 defines action gating and blocked-state UX on top of Stage 10, with `none` treated as conditionally reviewable only when Stage 12 provides a valid Anki create-and-rate path.
+  - Stage 12 defines the Anki new-card lifecycle, including mapped-`new` review, add-then-rate for unmapped terms, sentence/context capture during Anki note creation, and reuse-first guidance so Anki creation shares as much upstream mining logic with Jiten as architecture allows.
+  - Stage 13 defines failure taxonomy, stale-state taxonomy, targeted refresh boundaries, and recovery rules so Anki remains the source of truth even when write confirmation or refresh becomes uncertain.
+  - Stage 14A defines low-risk performance cleanup within the existing request surface, while Stage 14B defines the later contract-boundary shift to versioned bulk Anki resolution endpoints with fallback to the 14A path.
+- Plan for this run:
+  - Audit Stage 10, 11, 12, 13, 14A, and 14B together as one implementation sequence rather than as isolated docs.
+  - Remove contradictions, tighten stage boundaries, and make required invariants and ownership rules explicit enough for a weaker implementation model to follow reliably.
+  - Strengthen architecture/pattern guidance where the current docs rely too much on inference.
+- Prerequisite observations:
+  - The docs are directionally aligned, but some architecture rules are still implied rather than stated explicitly, especially around cross-stage invariants, state-quality ownership, and the boundary between Stage 14A and 14B.
+  - The most important requirement for this audit is to leave each stage readable as a blueprint that preserves earlier-stage guarantees instead of re-deciding them.
+- Risks/assumptions carried in:
+  - Assumption: the audit should improve clarity and implementation safety without materially changing the previously agreed product direction for these stages.
+  - Risk: tightening one stage doc can accidentally create a new contradiction with a neighbouring stage; mitigation is to re-read the revised documents as a sequence after patching.
+
+### 2026-04-08 - Stage Planning Implementation (Audit Stage 10-14B Docs For Clarity And Consistency)
+- Completed:
+  - Audited Stage 10, 11, 12, 13, 14A, and 14B together as one implementation sequence.
+  - Tightened the docs so later implementation can follow explicit architecture patterns rather than inferring them from scattered prose.
+  - Added cross-stage invariants where needed so each stage is clearer about what it owns and what it must preserve from earlier stages.
+  - Clarified the Stage 10 output contract expected by later stages, especially around stable target identity and separation of read-side identity from future write-path eligibility.
+  - Clarified the Stage 11 reviewability model so `none` is treated through a dedicated create-and-rate capability check rather than a permanent blocked assumption.
+  - Clarified the Stage 12 orchestration pattern so the implementation is pushed toward one shared creation/materialization pipeline and exact created-card identification rather than parallel popup-side flows.
+  - Clarified the Stage 13 ownership model for stale/uncertain state so popup, registry, and backend metadata do not drift into competing freshness state machines.
+  - Sharpened the Stage 14A / 14B boundary so low-risk cleanup stays within the existing contract surface and new endpoint work is clearly deferred to 14B.
+  - Clarified Stage 14B capability detection and rollout so unsupported-action situations are treated as compatibility/fallback issues rather than as proof that Anki itself is unavailable.
+- Files changed:
+  - `docs/stages/stage_10_complete_anki_read_side_identity.md`
+  - `docs/stages/stage_11_implement_action_gating_and_blocked_state_ux.md`
+  - `docs/stages/stage_12_implement_anki_new_card_lifecycle.md`
+  - `docs/stages/stage_13_implement_failure_transparency_stale_state_recovery_and_refresh_hardening.md`
+  - `docs/stages/stage_14A_apply_low_risk_anki_performance_cleanup.md`
+  - `docs/stages/stage_14B_implement_bulk_anki_resolution_and_contract_consolidation.md`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Every stage in this sequence should now be read as preserving earlier-stage guarantees rather than re-deciding them locally.
+  - Stage 10 is the canonical owner of Anki read-side target identity; later stages must consume that contract rather than recomputing it from raw queue/template data.
+  - Stage 11 should centralize reviewability behind one resolver and one capability hook so `none` can become reviewable in Stage 12 without redesigning the popup gating model.
+  - Stage 12 should use one orchestration path plus one shared field-materialization helper, with backend-specific code limited to the final persistence/transaction boundary.
+  - Stage 13 should normalize stale/uncertain-state ownership in shared metadata/registry space instead of letting popup-local flags become a second source of truth.
+  - Stage 14A should stay semantically frozen and contract-compatible, while Stage 14B is the first stage allowed to change the add-on contract boundary materially.
+- Blockers / open issues:
+  - No active blocker for the documentation audit.
+  - Exact enum/type names for reviewability and stale-state quality are still left to implementation, but the ownership model and required distinctions are now explicit.
+  - If Stage 11 is implemented before Stage 12, the create-and-rate capability hook must be introduced cleanly even if it initially resolves to false.
+- Verification status:
+  - Re-read the revised stage docs as a sequence after patching.
+  - Confirmed that the `none` handling across Stage 10, Stage 11, and Stage 12 is now consistent.
+  - Confirmed that Stage 13 now reads as additive state-quality/recovery logic rather than as a hidden rewrite of Stage 10/11 target identity.
+  - Confirmed that Stage 14A and Stage 14B now have a sharper, explicit boundary around existing-contract optimization vs new endpoint design.
+  - No runtime/build verification was needed for this documentation-only run.
+- Next recommended step:
+  - Use the revised Stage 10-14B docs as the implementation blueprint, starting with Stage 10 and preserving the newly documented invariants and ownership boundaries as each later stage lands.
+- Handoff:
+  - The stage docs are now significantly more implementation-directed and less inference-heavy.
+  - The next implementation run should treat the new cross-stage invariants and architecture-pattern sections as mandatory guardrails, especially for Stage 10 output contract, Stage 11 reviewability ownership, Stage 12 shared creation path, and Stage 13 state-quality ownership.
+
+### 2026-04-08 - Stage Planning Start-of-Run (Draft Stage 9A Anki Settings Surface Hardening Document)
+- Stage:
+  - New prerequisite planning stage between Stage 9 and Stage 10.
+- Current implementation state:
+  - Stage 10 through Stage 14B now form a clearer Anki roadmap, but the settings-page audit identified several prerequisite UI/config gaps that would make those stages difficult to exercise safely.
+  - The current settings page still hides the Anki enable toggle behind a debug-only section, does not expose all backend-required Anki settings such as read-only lookup config strategy or rollover handling, and does not fully harden the Anki deck editor as a first-class settings control.
+  - Stage 10 and Stage 12 both currently assume a stronger Anki settings/config surface than the product actually exposes today.
+- Plan for this run:
+  - Draft a short prerequisite stage document before Stage 10 focused on hardening the Anki settings surface.
+  - Scope the stage around:
+    - making Anki enablement/settings reachable and honest in the UI
+    - wiring the Anki config editors into the real settings lifecycle
+    - exposing or deliberately resolving backend-required Anki config concepts that later stages depend on
+    - removing or deferring misleading/dead Anki controls until their semantics are real
+  - Update neighbouring stage docs only as needed to make the prerequisite relationship explicit.
+- Prerequisite observations:
+  - This prerequisite stage should not implement Stage 10 read-side identity logic or Stage 12 create-and-rate logic itself.
+  - Its job is to make the settings/config surface trustworthy enough that later Anki stages can be configured, validated, and tested through the product rather than through hidden/debug-only settings.
+- Risks/assumptions carried in:
+  - Assumption: inserting a small Stage 9A is cleaner than overloading Stage 10 and Stage 12 with basic settings-surface repair work.
+  - Risk: the new stage could accidentally absorb too much read-side policy or write-path logic; mitigation is to keep it tightly focused on settings-page and configuration-surface hardening only.
+
+### 2026-04-08 - Stage Planning Implementation (Draft Stage 9A Anki Settings Surface Hardening Document)
+- Completed:
+  - Added a new prerequisite stage document, `Stage 9A`, focused on Anki settings-surface hardening before Stage 10.
+  - Scoped the stage around:
+    - visible/non-debug Anki enablement
+    - hardening the Anki settings wiring for custom deck editors
+    - endpoint normalization/validation UX
+    - resolving misleading or dead Anki settings controls before later stages depend on them
+  - Kept the stage intentionally separate from Stage 10 read-side identity policy and Stage 12 write-path transaction logic.
+  - Added lightweight prerequisite references in Stage 10 and Stage 12 so later implementation is less likely to skip the settings-surface bridge stage.
+- Files changed:
+  - `docs/stages/stage_9A_harden_anki_settings_surface_before_stage_10.md`
+  - `docs/stages/stage_10_complete_anki_read_side_identity.md`
+  - `docs/stages/stage_12_implement_anki_new_card_lifecycle.md`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - The settings-page and configuration-surface issues found in the audit are important enough to justify a dedicated bridge stage before Stage 10.
+  - Stage 9A owns settings-surface truthfulness and control wiring only; it does not absorb Stage 10 identity policy or Stage 12 create-and-rate semantics.
+  - The Anki deck editor should be treated as a first-class settings control, not as an ad hoc custom element outside the main settings lifecycle.
+  - Misleading Anki proxy controls should not remain in the main UI unless their runtime semantics are real.
+- Blockers / open issues:
+  - No active blocker for the documentation run.
+  - Future implementation will still need to decide the exact UX form of Anki enablement:
+    - dedicated integration toggle
+    - or clearer backend-selection wording
+  - Future implementation will still need to decide whether proxy controls are implemented in 9A or explicitly deferred/hidden there.
+- Verification status:
+  - Read back the new Stage 9A doc and confirmed that it stays inside settings/configuration-surface scope.
+  - Confirmed that Stage 10 and Stage 12 now explicitly reference Stage 9A as a prerequisite rather than implicitly assuming the settings surface already exists.
+  - No runtime/build verification was needed for this documentation-only run.
+- Next recommended step:
+  - Use `docs/stages/stage_9A_harden_anki_settings_surface_before_stage_10.md` as the next implementation entry point before beginning Stage 10.
+- Handoff:
+  - Stage 9A is now the explicit bridge between Stage 9 and Stage 10.
+  - The next implementation run should read the working log, Stage 9A, and Stage 10 first, then keep Stage 9A tightly focused on settings-page wiring and configuration-surface honesty.
+
+### 2026-04-08 - Stage Planning Start-of-Run (Reaudit Stage 9A-14B After Stage 9A Insertion)
+- Stage:
+  - Cross-stage documentation reaudit for Stage 9A through Stage 14B.
+- Current implementation state:
+  - Stage 9A now exists as the bridge stage for Anki settings-surface hardening before Stage 10.
+  - Stage 10 and Stage 12 already reference Stage 9A as a prerequisite, and the main 10-14B sequence remains in place.
+  - The remaining task is to re-check the updated chain for any subtle gaps left by the Stage 9A insertion or by earlier audits, especially around settings-editor correctness, newly surfaced Anki states, and ownership of rollover/source-of-truth policy.
+- Plan for this run:
+  - Re-read the Stage 9A-14B sequence as one chain.
+  - Patch only real remaining gaps or weak spots.
+  - Keep scope strictly to documentation refinement and consistency hardening.
+- Prerequisite observations:
+  - The current docs already align on the large architecture pattern.
+  - The likely remaining gaps are smaller and more specific:
+    - whether Stage 9A explicitly covers custom Anki editor interaction correctness
+    - whether Stage 10 explicitly claims `buried` styling/editor support
+    - whether Stage 13 explicitly owns the decision around advanced rollover override vs Anki-derived truth
+- Risks/assumptions carried in:
+  - Assumption: only small clarifications should still be needed.
+  - Risk: over-editing could blur stage boundaries again; mitigation is to patch only the smallest necessary sections and preserve existing ownership lines.
+
+### 2026-04-08 - Stage Planning Implementation (Reaudit Stage 9A-14B After Stage 9A Insertion)
+- Completed:
+  - Re-read the Stage 9A-14B sequence after the new Stage 9A insertion.
+  - Confirmed that the larger stage architecture remains consistent and that no new major contradictions were introduced by inserting the bridge stage.
+  - Tightened the remaining smaller gaps that were still present:
+    - Stage 9A now explicitly covers custom Anki deck-editor interaction correctness, including copy/paste and hidden-state coupling concerns.
+    - Stage 10 now explicitly claims word-style/editor support for newly surfaced Anki states, especially `buried`.
+    - Stage 13 now explicitly owns the decision about whether advanced rollover override configuration remains supported or is retired in favour of Anki-derived truth.
+- Files changed:
+  - `docs/stages/stage_9A_harden_anki_settings_surface_before_stage_10.md`
+  - `docs/stages/stage_10_complete_anki_read_side_identity.md`
+  - `docs/stages/stage_13_implement_failure_transparency_stale_state_recovery_and_refresh_hardening.md`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Stage 9A should own not just settings visibility/wiring, but also correctness of the Anki deck-editor interactions that make the settings surface trustworthy in practice.
+  - Stage 10 should explicitly own the styling/editor implications of surfacing new Anki identity states so `buried` is not left as a second-class UI state.
+  - Stage 13 is the right stage to make the final decision about advanced rollover override truth vs Anki-derived truth, because that question is part of recovery/refresh semantics rather than basic settings exposure or read-side identity.
+- Blockers / open issues:
+  - No active blocker for the documentation sequence.
+  - Exact implementation choice still remains open on whether rollover override is retained as an advanced option or retired, but the stage ownership is now explicit.
+  - Exact UX form of Anki enablement and proxy-control resolution still remains for implementation, but those now live clearly inside Stage 9A.
+- Verification status:
+  - Re-read the revised Stage 9A, Stage 10, and Stage 13 docs after patching.
+  - Confirmed that the new clarifications reinforce stage boundaries instead of shifting work into the wrong stage.
+  - Confirmed that the 9A-14B chain now reads consistently with no remaining major contradictions found in this pass.
+  - No runtime/build verification was needed for this documentation-only run.
+- Next recommended step:
+  - Use Stage 9A as the next implementation entry point, then proceed through the stage chain in order.
+- Handoff:
+  - The new stage sequence now reads cleanly as:
+    - Stage 9A settings-surface hardening
+    - Stage 10 read-side identity
+    - Stage 11 gating UX
+    - Stage 12 new-card lifecycle
+    - Stage 13 recovery/refresh hardening
+    - Stage 14A/14B performance and contract consolidation
+  - The next implementation run should not need further stage-doc cleanup before beginning Stage 9A unless implementation discovers a genuinely new product-direction issue.
+
+### 2026-04-08 - Stage Planning Implementation (Make Stage 9A-14B Fully Directive For Implementation)
+- Completed:
+  - Re-read Stage 9A through Stage 14B with the specific goal of removing implementation-time architecture decisions from the docs.
+  - Tightened the stage chain so the implementation model is directed by fixed contracts, ownership boundaries, and explicit policy instead of recommendation-style gaps.
+  - Converted the key stage docs to use explicit architecture sections such as:
+    - `Implementation-time choices eliminated`
+    - `Fixed implementation directives`
+    - `Required implementation pattern`
+    - exact request/response or resolver output contracts where needed
+  - Added several concrete architecture decisions that were previously still implicit:
+    - Stage 9A now fixes the visible Anki settings surface and what is intentionally hidden/deferred.
+    - Stage 10 now fixes readonly-config merge strategy, normalized config identity, template-ord canonical matching, and blocked-state precedence.
+    - Stage 11 now fixes the blocked-state panel model and defines one normalized reviewability resolver output contract.
+    - Stage 12 now fixes one dedicated Anki commit endpoint (`jitenTargetedReviewCommitV1`), the exact Anki-mode action set, and exact sentence sanitization semantics.
+    - Stage 13 now fixes the state-quality model, ownership of `nextRefreshAt`, retirement of `ankiRolloverHour` as runtime truth, and the targeted boundary-refresh model.
+    - Stage 14A now reads as a fixed low-risk optimization order rather than an open-ended performance brainstorming stage.
+    - Stage 14B now fixes the two-endpoint bulk contract family, `apiReflect`-based capability detection, and the required request/response shapes for both bulk resolution and bulk refresh.
+- Files changed:
+  - `docs/stages/stage_9A_harden_anki_settings_surface_before_stage_10.md`
+  - `docs/stages/stage_10_complete_anki_read_side_identity.md`
+  - `docs/stages/stage_11_implement_action_gating_and_blocked_state_ux.md`
+  - `docs/stages/stage_12_implement_anki_new_card_lifecycle.md`
+  - `docs/stages/stage_13_implement_failure_transparency_stale_state_recovery_and_refresh_hardening.md`
+  - `docs/stages/stage_14A_apply_low_risk_anki_performance_cleanup.md`
+  - `docs/stages/stage_14B_implement_bulk_anki_resolution_and_contract_consolidation.md`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - The implementation model should not choose the Stage 12 Anki write contract shape; the docs now require `jitenTargetedReviewCommitV1` as the single Anki review-commit endpoint for create-and-rate and existing-card review.
+  - The implementation model should not choose the supported Anki-mode popup action set; the docs now fix it to `again`, `hard`, `good`, and `easy`, while hiding `Never forget`, `Blacklist`, and `Forget` in Anki mode.
+  - The implementation model should not choose the Stage 13 freshness/recovery model; the docs now fix the normalized state-quality values, the rule that only `fresh` permits further writes, and the `nextRefreshAt`-driven refresh boundary model.
+  - The implementation model should not choose the Stage 14B endpoint family or discovery strategy; the docs now require `jitenResolveTermsV1`, `jitenRefreshTargetsV1`, and `apiReflect`-based capability discovery before primary routing.
+  - The implementation model should not invent a different readonly-config merge or template identity policy in Stage 10; those are now explicitly specified.
+- Blockers / open issues:
+  - No blocker for the documentation chain itself.
+  - Some sections still intentionally allow minor wording variation for user-facing copy, but the underlying behaviour and architecture are now fixed.
+  - Actual implementation may still uncover low-level codebase constraints, but the major product/architecture decisions should no longer need to be made by the implementation model.
+- Verification status:
+  - Re-read the changed sections of Stage 9A, 10, 11, 12, 13, 14A, and 14B after patching.
+  - Verified that Stage 11 and Stage 12 now agree on the `none` create-path behaviour and hidden-blocked-control model.
+  - Verified that Stage 12 and Stage 14B no longer leave the Anki contract shape to the implementation model.
+  - Verified that Stage 13 now fixes both the state-quality model and the boundary-refresh ownership model.
+  - No runtime/build verification was needed because this was a docs-only run.
+- Next recommended step:
+  - Begin Stage 9A implementation using the revised stage docs as the execution blueprint, then continue through Stage 10 onward in order.
+- Handoff:
+  - The stage docs should now be treated as directive implementation specs rather than advisory design notes.
+  - The next implementation run should follow the fixed contracts and ownership boundaries in the docs and should only deviate if a genuinely impossible codebase constraint is discovered and recorded.
+
+### 2026-04-08 - Stage Planning Start-of-Run (Reaudit Stage 9A-14B For Residual Architectural Ambiguity)
+- Stage:
+  - Cross-stage documentation reaudit for Stage 9A through Stage 14B.
+- Current implementation state:
+  - The stage chain already contains explicit architecture sections and fixed directives for the main Anki roadmap from settings hardening through bulk contract consolidation.
+  - The remaining work for this run is not broad restructuring; it is a strict audit for any residual ambiguity, implicitness, reopened choices, or under-specified contracts that could still cause an implementation model to invent architecture.
+- Plan for this run:
+  - Re-read Stage 9A through Stage 14B as a directive chain.
+  - Identify any sections where later wording weakens earlier fixed directives or leaves contract details underspecified.
+  - Patch only the remaining ambiguity and record the final handoff state.
+- Prerequisite observations:
+  - The docs now already fix major choices such as readonly-config merge policy, Stage 11 blocked-state gating, the Stage 12 Anki commit endpoint, the Stage 13 state-quality model, and the Stage 14B endpoint family.
+  - The most likely remaining issues are smaller residual soft-language pockets or sections that still implicitly leave a branch open after a decision has already been made elsewhere in the same doc.
+- Risks/assumptions carried in:
+  - Assumption: if ambiguities remain, they are now likely local wording/contract issues rather than major stage-order problems.
+  - Risk: over-editing could make docs noisier without increasing clarity; mitigation is to patch only wording that genuinely changes implementation discretion.
+
+### 2026-04-08 - Stage Planning Implementation (Reaudit Stage 9A-14B For Residual Architectural Ambiguity)
+- Completed:
+  - Re-read the stage chain from Stage 9A through Stage 14B after the prior directive-hardening pass.
+  - Performed a stricter ambiguity audit aimed specifically at residual implementation-time discretion rather than broad documentation quality.
+  - Patched the remaining places where earlier fixed decisions were still softened or under-specified in later sections.
+  - Closed the most important remaining contract gap:
+    - Stage 10 now explicitly distinguishes `resolutionStatus` (`resolved`, `config-insufficient`, `backend-unavailable`) from `mappingOutcome` (`selected`, `none`, `ambiguous`).
+    - Stage 11 now explicitly consumes that `resolutionStatus` and includes a blocked configuration-insufficiency path in its reviewability model and UX contract.
+  - Tightened several smaller directive leaks:
+    - Stage 9A no longer leaves proxy-control handling or endpoint-validation triggering open in later descriptive sections.
+    - Stage 12 no longer leaves write-target resolution wording open after fixing `ankiMiningConfig` as the sole scheduler-review target.
+    - Stage 13 no longer phrases cache invalidation or taxonomy sections as implementation choices after already fixing the model.
+    - Stage 14B no longer leaves ambiguity diagnostics, refresh-endpoint scope, or request correlation naming underspecified.
+- Files changed:
+  - `docs/stages/stage_9A_harden_anki_settings_surface_before_stage_10.md`
+  - `docs/stages/stage_10_complete_anki_read_side_identity.md`
+  - `docs/stages/stage_11_implement_action_gating_and_blocked_state_ux.md`
+  - `docs/stages/stage_12_implement_anki_new_card_lifecycle.md`
+  - `docs/stages/stage_13_implement_failure_transparency_stale_state_recovery_and_refresh_hardening.md`
+  - `docs/stages/stage_14A_apply_low_risk_anki_performance_cleanup.md`
+  - `docs/stages/stage_14B_implement_bulk_anki_resolution_and_contract_consolidation.md`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Stage 10 read-side output now has two explicit layers:
+    - `resolutionStatus` for whether the system had enough trustworthy information to classify the term at all
+    - `mappingOutcome` only when resolution actually succeeded
+  - Stage 11 must treat configuration insufficiency as its own blocked path instead of overloading it into `none` or generic unavailability.
+  - Stage 9A now consistently encodes that proxy controls are hidden/deferred, not left as a late implementation choice.
+  - Stage 14B now consistently treats `jitenRefreshTargetsV1` as mandatory, narrow, and contractually explicit rather than conditionally present.
+- Blockers / open issues:
+  - No remaining major architecture/design ambiguity was found in this pass.
+  - Minor user-facing wording flexibility still exists in a few message sections, but it no longer changes implementation architecture or behaviour.
+- Verification status:
+  - Re-read the changed sections after patching.
+  - Ran targeted searches for previously ambiguous phrases and contract leaks; the final search returned clean for the main residual-ambiguity patterns targeted in this pass.
+  - Confirmed that the Stage 10 output contract and Stage 11 gating contract now align on config insufficiency vs actual `none`.
+  - No runtime/build verification was needed because this was a docs-only run.
+- Next recommended step:
+  - Begin Stage 9A implementation directly from the revised docs, then proceed through Stage 10 onward in order.
+- Handoff:
+  - The stage docs now read as a tighter execution blueprint, with the remaining flexibility limited mostly to exact user-facing copy rather than product architecture.
+  - The next implementation run should not need to make major design decisions if it follows the stage docs and working log in order.
