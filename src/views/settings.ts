@@ -1,3 +1,5 @@
+import { getApiVersion } from '@shared/anki/get-api-version';
+import { normalizeAnkiConnectUrl } from '@shared/anki/normalize-anki-connect-url';
 import { getConfiguration } from '@shared/configuration/get-configuration';
 import { getActiveProfileId } from '@shared/configuration/profiles-state';
 import { setConfiguration } from '@shared/configuration/set-configuration';
@@ -48,6 +50,75 @@ const validators: Partial<
 };
 
 const configurationUpdatedCommand = new ConfigurationUpdatedCommand();
+const fieldInitialisationTasks: Promise<void>[] = [];
+let settingsInitialisationComplete = false;
+let suppressNextAnkiUrlAutoRefresh = false;
+const SETTINGS_FIELD_SELECTOR =
+  'input, textarea, select, keybind-input, parsers-input, features-input, new-state-input, word-style-editor, mining-input';
+const ANKI_MINING_INPUT_IDS = ['ankiMiningConfig', 'ankiNeverForgetConfig', 'ankiBlacklistConfig'];
+
+type ConfigurationFieldElement = HTMLElement & {
+  checked?: boolean;
+  name: string;
+  onchange: ((this: GlobalEventHandlers, ev: Event) => unknown) | null;
+  type?: string;
+  value: ConfigurationSchema[keyof ConfigurationSchema];
+};
+
+const getAnkiMiningInputs = (): HTMLMiningInputElement[] =>
+  ANKI_MINING_INPUT_IDS.map((id) => document.getElementById(id)).filter(
+    (element): element is HTMLMiningInputElement => element instanceof HTMLMiningInputElement,
+  );
+
+const getErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : 'Unknown error';
+
+const applyAnkiFetchUrl = (ankiUrl: string): void => {
+  let normalized = '';
+
+  try {
+    normalized = normalizeAnkiConnectUrl(ankiUrl);
+  } catch {
+    // Keep invalid values editable in the text field but prevent dependent fetch calls.
+  }
+
+  for (const input of getAnkiMiningInputs()) {
+    input.fetchUrl = normalized;
+  }
+};
+
+const refreshAnkiMiningInputs = async (ankiUrl: string): Promise<void> => {
+  const normalized = normalizeAnkiConnectUrl(ankiUrl);
+
+  await Promise.all(getAnkiMiningInputs().map((input) => input.refreshFromUrl(normalized)));
+};
+
+const syncAnkiInputsFromUrl = async (ankiUrl: string, showFailureToast: boolean): Promise<void> => {
+  let normalizedAnkiUrl: string;
+
+  try {
+    normalizedAnkiUrl = normalizeAnkiConnectUrl(ankiUrl);
+  } catch (error) {
+    if (showFailureToast) {
+      displayToast('error', getErrorMessage(error));
+    }
+
+    return;
+  }
+
+  applyAnkiFetchUrl(normalizedAnkiUrl);
+
+  try {
+    await refreshAnkiMiningInputs(normalizedAnkiUrl);
+  } catch (error) {
+    if (showFailureToast) {
+      displayToast(
+        'error',
+        `Failed to refresh Anki deck selectors from endpoint: ${getErrorMessage(error)}`,
+      );
+    }
+  }
+};
 
 //#region Theme Variables
 
@@ -136,43 +207,55 @@ setupColourPicker('themeAccentColour', 'themeAccentColourText');
 
 //#region Init Interactions
 
-withElements(
-  'input, textarea, select, keybind-input, parsers-input, features-input, new-state-input, word-style-editor',
-  (field: HTMLInputElement) => {
-    const internal = field.hasAttribute('internal');
-    const ignored = ['hidden', 'submit', 'button'];
-    const checkbox = field.type === 'checkbox';
+withElements(SETTINGS_FIELD_SELECTOR, (field: ConfigurationFieldElement) => {
+  const internal = field.hasAttribute('internal');
+  const ignored = ['hidden', 'submit', 'button'];
+  const checkbox = field.type === 'checkbox';
 
-    if (internal || ignored.includes(field.type)) {
-      return;
-    }
+  if (internal || (!!field.type && ignored.includes(field.type))) {
+    return;
+  }
 
-    void getConfiguration(field.name as keyof ConfigurationSchema)
-      // Load current or default configuration
-      .then((value) => {
-        if (checkbox) {
-          field.checked = value as boolean;
-        } else {
-          field.value = value as string;
-        }
+  const initialisationTask = getConfiguration(field.name as keyof ConfigurationSchema)
+    // Load current or default configuration
+    .then((value) => {
+      if (checkbox) {
+        field.checked = value as boolean;
+      } else {
+        field.value = value;
+      }
 
-        return validateAndSet(field.name as keyof ConfigurationSchema, value);
-      })
-      // Apply change listeners
-      .then(() => {
-        field.onchange = (): void => {
-          const value = checkbox ? field.checked : field.value;
+      return validateAndSet(field.name as keyof ConfigurationSchema, value);
+    })
+    // Apply change listeners
+    .then(() => {
+      field.onchange = (): void => {
+        const value = checkbox ? field.checked : field.value;
 
-          void validateAndSet(field.name as keyof ConfigurationSchema, value, async () => {
-            await setConfiguration(field.name as keyof ConfigurationSchema, value);
-            configurationUpdatedCommand.send();
+        void validateAndSet(field.name as keyof ConfigurationSchema, value, async () => {
+          await setConfiguration(field.name as keyof ConfigurationSchema, value);
+          configurationUpdatedCommand.send();
 
-            displayToast('success', 'Settings saved successfully', undefined, true);
-          });
-        };
-      });
-  },
-);
+          displayToast('success', 'Settings saved successfully', undefined, true);
+        });
+      };
+    });
+
+  fieldInitialisationTasks.push(initialisationTask);
+});
+
+void Promise.allSettled(fieldInitialisationTasks).then(() => {
+  settingsInitialisationComplete = true;
+
+  const ankiEnabled = localConfiguration.get('enableAnkiIntegration') === true;
+  const ankiUrl = localConfiguration.get('ankiUrl');
+
+  if (!ankiEnabled || typeof ankiUrl !== 'string' || !ankiUrl.length) {
+    return;
+  }
+
+  void syncAnkiInputsFromUrl(ankiUrl, false);
+});
 
 withElement('#apiKeyRevealButton', (button: HTMLInputElement) => {
   button.onclick = (): void => {
@@ -189,6 +272,50 @@ withElement('#apiTokenButton', (button) => {
   button.onclick = (): void => {
     withElement('#jitenApiKey', (i: HTMLInputElement) => {
       void validateJitenApiKey(i.value);
+    });
+  };
+});
+
+withElement('#ankiUrlButton', (button: HTMLInputElement) => {
+  button.onclick = (): void => {
+    withElement('#ankiUrl', (ankiUrlInput: HTMLInputElement) => {
+      void (async (): Promise<void> => {
+        let normalizedAnkiUrl: string;
+
+        try {
+          normalizedAnkiUrl = normalizeAnkiConnectUrl(ankiUrlInput.value);
+        } catch (error) {
+          displayToast('error', getErrorMessage(error));
+
+          return;
+        }
+
+        ankiUrlInput.value = normalizedAnkiUrl;
+
+        try {
+          suppressNextAnkiUrlAutoRefresh = true;
+
+          await validateAndSet('ankiUrl', normalizedAnkiUrl, async () => {
+            await setConfiguration('ankiUrl', normalizedAnkiUrl);
+            configurationUpdatedCommand.send();
+          });
+        } catch (error) {
+          displayToast('error', `Failed to save Anki endpoint: ${getErrorMessage(error)}`);
+
+          return;
+        } finally {
+          suppressNextAnkiUrlAutoRefresh = false;
+        }
+
+        try {
+          await getApiVersion({ ankiConnectUrl: normalizedAnkiUrl, showToastOnError: false });
+          applyAnkiFetchUrl(normalizedAnkiUrl);
+          await refreshAnkiMiningInputs(normalizedAnkiUrl);
+          displayToast('success', 'Anki endpoint is reachable and deck settings were refreshed');
+        } catch (error) {
+          displayToast('error', `Failed to reach Anki endpoint: ${getErrorMessage(error)}`);
+        }
+      })();
     });
   };
 });
@@ -289,6 +416,22 @@ function afterValueUpdated(
   value: ConfigurationSchema[keyof ConfigurationSchema],
 ): void {
   localConfiguration.set(key, value);
+
+  if (key === 'ankiUrl') {
+    applyAnkiFetchUrl(value as string);
+
+    if (settingsInitialisationComplete && !suppressNextAnkiUrlAutoRefresh) {
+      void syncAnkiInputsFromUrl(value as string, true);
+    }
+  }
+
+  if (key === 'enableAnkiIntegration' && value === true && settingsInitialisationComplete) {
+    const currentAnkiUrl = localConfiguration.get('ankiUrl');
+
+    if (typeof currentAnkiUrl === 'string' && currentAnkiUrl.length) {
+      void syncAnkiInputsFromUrl(currentAnkiUrl, true);
+    }
+  }
 
   updateBindings(key);
 }
@@ -471,16 +614,14 @@ const toc = document.getElementById('settings-toc');
 
 if (toc) {
   const tocLinks = Array.from(toc.querySelectorAll<HTMLAnchorElement>('a[href^="#"]'));
-  const sectionEls: Element[] = [];
-
-  for (const link of tocLinks) {
+  const getSectionByLink = (link: HTMLAnchorElement): HTMLElement | null => {
     const id = link.getAttribute('href')!.slice(1);
-    const section = document.getElementById(id);
 
-    if (section) {
-      sectionEls.push(section);
-    }
-  }
+    return document.getElementById(id);
+  };
+
+  const getSectionActivationTarget = (section: HTMLElement): HTMLElement =>
+    section.querySelector<HTMLElement>(':scope > h6, :scope > summary') ?? section;
 
   const scrollTocToLink = (link: HTMLAnchorElement): void => {
     const tocRect = toc.getBoundingClientRect();
@@ -488,6 +629,203 @@ if (toc) {
     const offset = linkRect.left - tocRect.left + linkRect.width / 2 - tocRect.width / 2;
 
     toc.scrollBy({ left: offset, behavior: 'smooth' });
+  };
+
+  const setActiveLink = (link: HTMLAnchorElement | null, syncToc = false): void => {
+    if (!link || link.style.display === 'none' || link.classList.contains('search-hidden')) {
+      return;
+    }
+
+    if (activeLink === link) {
+      return;
+    }
+
+    activeLink?.classList.remove('active');
+    link.classList.add('active');
+    activeLink = link;
+
+    if (syncToc) {
+      scrollTocToLink(link);
+    }
+  };
+
+  const clearStaleFocusedTocLink = (): void => {
+    const focusedLink = document.activeElement;
+
+    if (
+      focusedLink instanceof HTMLAnchorElement &&
+      toc.contains(focusedLink) &&
+      focusedLink !== activeLink
+    ) {
+      focusedLink.blur();
+    }
+  };
+
+  const getActivationOffsetForScroll = (scrollTop: number): number => {
+    const stickyHeaderBottom =
+      document.querySelector<HTMLElement>('.settings-search')?.getBoundingClientRect().bottom ?? 0;
+    const baseOffset = Math.max(stickyHeaderBottom + 24, Math.round(window.innerHeight * 0.32));
+    const lowerOffset = Math.max(stickyHeaderBottom + 24, Math.round(window.innerHeight * 0.9));
+    const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+
+    if (maxScroll <= 0) {
+      return baseOffset;
+    }
+
+    const scrollProgress = scrollTop / maxScroll;
+
+    if (scrollProgress <= 0.66) {
+      return baseOffset;
+    }
+
+    const bottomThirdProgress = Math.min(1, (scrollProgress - 0.66) / 0.34);
+
+    // Shift the activation line downward through the last third so short trailing
+    // sections can still become active without changing the normal mid-page feel.
+    return Math.round(baseOffset + (lowerOffset - baseOffset) * bottomThirdProgress);
+  };
+
+  const getActivationOffset = (): number => getActivationOffsetForScroll(window.scrollY);
+
+  const getClickOffset = (): number => {
+    const stickyHeaderBottom =
+      document.querySelector<HTMLElement>('.settings-search')?.getBoundingClientRect().bottom ?? 0;
+
+    return Math.max(stickyHeaderBottom + 24, Math.round(window.innerHeight * 0.28));
+  };
+
+  const getVisibleSectionLink = (): HTMLAnchorElement | null => {
+    const visibleLinks = tocLinks.filter(
+      (link) => link.style.display !== 'none' && !link.classList.contains('search-hidden'),
+    );
+
+    if (!visibleLinks.length) {
+      return null;
+    }
+
+    const activationOffset = getActivationOffset();
+    let activeCandidate: HTMLAnchorElement | null = null;
+    let firstUpcoming: HTMLAnchorElement | null = null;
+
+    for (const link of visibleLinks) {
+      const section = getSectionByLink(link);
+
+      if (
+        !section ||
+        section.style.display === 'none' ||
+        section.classList.contains('search-hidden')
+      ) {
+        continue;
+      }
+
+      const activationTarget = getSectionActivationTarget(section);
+      const sectionTop = activationTarget.getBoundingClientRect().top;
+
+      if (sectionTop <= activationOffset) {
+        activeCandidate = link;
+
+        continue;
+      }
+
+      firstUpcoming ??= link;
+
+      break;
+    }
+
+    return activeCandidate ?? firstUpcoming ?? visibleLinks[0];
+  };
+
+  const getNextVisibleSection = (section: HTMLElement): HTMLElement | null => {
+    const visibleLinks = tocLinks.filter(
+      (link) => link.style.display !== 'none' && !link.classList.contains('search-hidden'),
+    );
+    const currentIndex = visibleLinks.findIndex((link) => getSectionByLink(link) === section);
+
+    if (currentIndex < 0) {
+      return null;
+    }
+
+    for (const link of visibleLinks.slice(currentIndex + 1)) {
+      const nextSection = getSectionByLink(link);
+
+      if (
+        nextSection &&
+        nextSection.style.display !== 'none' &&
+        !nextSection.classList.contains('search-hidden')
+      ) {
+        return nextSection;
+      }
+    }
+
+    return null;
+  };
+
+  const scrollToSection = (section: HTMLElement): void => {
+    const activationTarget = getSectionActivationTarget(section);
+    const nextSection = getNextVisibleSection(section);
+    const nextActivationTarget = nextSection ? getSectionActivationTarget(nextSection) : null;
+    const clickOffset = getClickOffset();
+    const clickBuffer = 28;
+    const nextHeadingBuffer = 24;
+    const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    const desiredTop =
+      window.scrollY +
+      activationTarget.getBoundingClientRect().top -
+      Math.max(0, clickOffset - clickBuffer);
+    const nextHeadingDocTop = nextActivationTarget
+      ? window.scrollY + nextActivationTarget.getBoundingClientRect().top
+      : null;
+    let maxAllowedTop = maxScroll;
+
+    if (nextHeadingDocTop !== null) {
+      maxAllowedTop = Math.min(
+        maxScroll,
+        Math.max(
+          0,
+          Math.round(
+            nextHeadingDocTop - getActivationOffsetForScroll(maxScroll) - nextHeadingBuffer,
+          ),
+        ),
+      );
+
+      // Refine against the hybrid activation line at the candidate scroll position so the next
+      // heading remains below the actual purple active-line geometry after the click scroll ends.
+      for (let i = 0; i < 6; i += 1) {
+        const refinedTop =
+          nextHeadingDocTop - getActivationOffsetForScroll(maxAllowedTop) - nextHeadingBuffer;
+        const boundedTop = Math.min(maxScroll, Math.max(0, refinedTop));
+
+        if (Math.abs(boundedTop - maxAllowedTop) < 1) {
+          maxAllowedTop = boundedTop;
+
+          break;
+        }
+
+        maxAllowedTop = boundedTop;
+      }
+    }
+
+    const scrollTop = Math.min(
+      maxScroll,
+      Math.max(0, Math.round(Math.min(desiredTop, maxAllowedTop))),
+    );
+
+    window.scrollTo({ top: scrollTop, behavior: 'smooth' });
+  };
+
+  let activeSyncQueued = false;
+  const queueActiveLinkSync = (): void => {
+    if (activeSyncQueued) {
+      return;
+    }
+
+    activeSyncQueued = true;
+
+    window.requestAnimationFrame(() => {
+      activeSyncQueued = false;
+      setActiveLink(getVisibleSectionLink());
+      clearStaleFocusedTocLink();
+    });
   };
 
   toc.addEventListener('click', (e: Event) => {
@@ -499,48 +837,28 @@ if (toc) {
 
     e.preventDefault();
 
-    const id = link.getAttribute('href')!.slice(1);
-    const target = document.getElementById(id);
+    const target = getSectionByLink(link);
 
     if (target) {
       if (target instanceof HTMLDetailsElement && !target.open) {
         target.open = true;
       }
 
-      target.scrollIntoView({ behavior: 'smooth' });
-      scrollTocToLink(link);
+      setActiveLink(link, true);
+      scrollToSection(target);
+      queueActiveLinkSync();
     }
   });
 
   let activeLink: HTMLAnchorElement | null = null;
 
-  const observer = new IntersectionObserver(
-    (entries: IntersectionObserverEntry[]) => {
-      for (const entry of entries) {
-        if (entry.isIntersecting) {
-          const link = toc.querySelector<HTMLAnchorElement>(`a[href="#${entry.target.id}"]`);
+  window.addEventListener('scroll', queueActiveLinkSync, { passive: true });
+  window.addEventListener('resize', queueActiveLinkSync);
 
-          if (link && link.style.display !== 'none') {
-            activeLink?.classList.remove('active');
-            link.classList.add('active');
-            activeLink = link;
-            scrollTocToLink(link);
-          }
-        }
-      }
-    },
-    { rootMargin: '-10% 0px -80% 0px' },
-  );
-
-  for (const section of sectionEls) {
-    observer.observe(section);
-  }
+  queueActiveLinkSync();
 
   afterBindingsCallbacks.push(() => {
-    if (activeLink?.style.display === 'none') {
-      activeLink.classList.remove('active');
-      activeLink = null;
-    }
+    queueActiveLinkSync();
   });
 }
 

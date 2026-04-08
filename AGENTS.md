@@ -264,3 +264,9 @@ ESLint enforces:
 - Import restrictions per-scope
 
 Run `npm run lint` before committing. All lint errors must be resolved.
+
+### Repository line endings
+
+- This repo uses `LF` line endings for tracked text and source files.
+- If a Prettier line-ending error appears, normalize the affected file(s) to `LF` before rerunning `npm run lint`.
+- Treat `Insert CR` / line-ending lint errors as policy drift, not as logic or formatting bugs.

@@ -1,6 +1,7 @@
 import { getConfiguration } from '../configuration/get-configuration';
 import { displayToast } from '../dom/display-toast';
 import { AnkiEndpoints, AnkiRequestOptions } from './api.types';
+import { normalizeAnkiConnectUrl } from './normalize-anki-connect-url';
 
 export const request = async <Key extends keyof AnkiEndpoints>(
   action: Key,
@@ -18,7 +19,18 @@ export const request = async <Key extends keyof AnkiEndpoints>(
     throw new Error('Anki URL is not set');
   }
 
-  const usedUrl = new URL(ankiUrl.replace(/127\.0\.0\.1/, 'http://localhost'));
+  let usedUrl: URL;
+
+  try {
+    usedUrl = new URL(normalizeAnkiConnectUrl(ankiUrl));
+  } catch (error) {
+    if (showToastOnError) {
+      displayToast('error', error instanceof Error ? error.message : 'Anki URL is invalid');
+    }
+
+    throw error;
+  }
+
   const response = await fetch(usedUrl, {
     method: 'POST',
     headers: {

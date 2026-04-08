@@ -1,10 +1,10 @@
 # Implementation Working Log
 
 ## Current Snapshot
-- Current stage: Stage 9 - Add Targeted Refresh, Failure Handling, and Hybrid UX Clarity
-- Overall status: Stage 8B remains complete and validated; Stage 9 follow-up includes residual scheduling fixes for cache invalidation and configurable rollover hour.
-- Active backend behavior: successful targeted writes now invalidate affected Anki card cache entries; due-day classification now uses configurable `ankiRolloverHour` (default `4`) rather than hardcoded rollover.
-- Last updated: 2026-04-07 21:56:37 +10:00
+- Current stage: Stage 9A - Harden Anki Settings Surface Before Stage 10
+- Overall status: Stage 9A implementation plus follow-up UX hardening is in place; Anki settings section is now positioned above Parsing/Features/Other to match requested navigation priority.
+- Active backend behavior: Anki request URLs run through shared canonical normalization before fetch; settings-side endpoint flows refresh dependent Anki editors on page-load hydration, endpoint save changes, and explicit endpoint validation.
+- Last updated: 2026-04-08 16:07:22 +10:00
 
 ## Architectural Decisions
 ### Decision: Keep Stage 0 output documentation-only
@@ -2682,3 +2682,693 @@ pm run build passes.
 - Handoff:
   - The stage docs now read as a tighter execution blueprint, with the remaining flexibility limited mostly to exact user-facing copy rather than product architecture.
   - The next implementation run should not need to make major design decisions if it follows the stage docs and working log in order.
+
+### 2026-04-08 - Stage 9A Start-of-Run (Harden Anki Settings Surface Before Stage 10)
+- Stage:
+  - Stage 9A - Harden Anki settings surface before Stage 10.
+- Current implementation state:
+  - Runtime work is complete through Stage 8B and Stage 9 follow-up hardening passes; latest verified code changes were in scheduling/cache/add-on robustness.
+  - Stage 9A exists as a directive stage document but its settings-surface implementation has not yet landed.
+  - Recent runs were documentation-focused (Stage 9A-14B consistency/directive hardening), not runtime settings-page changes.
+- Plan for this run:
+  - Implement Stage 9A settings-surface hardening in the settings UI/controller and related Anki custom controls only.
+  - Make `enableAnkiIntegration` reachable in normal settings UI and keep Anki section visibility tied to that toggle.
+  - Harden `ankiUrlButton` into test-and-refresh behavior with endpoint normalization, persisted canonical URL, explicit failure feedback, and dependent Anki editor refresh on success.
+  - Make `mining-input` participate reliably in settings load/save lifecycle, including isolation for copy/paste/reset/template-target editing.
+  - Hide/defer unsupported proxy-facing controls from main UI per Stage 9A directives without changing later-stage read/write policy scope.
+  - Verify with lint/build and targeted settings-flow checks where possible.
+- Prerequisite observations:
+  - Stage 9A must stay within settings-surface integrity and must not absorb Stage 10 read-side identity policy or Stage 12 write-path logic.
+  - The stage document now fixes directive choices for toggle visibility, endpoint flow, and proxy control handling; implementation should follow those directly.
+  - No active blocker is recorded for starting Stage 9A implementation.
+- Risks/assumptions carried in:
+  - Assumption: existing settings-page architecture can support first-class custom element persistence with localized controller changes.
+  - Risk: hidden coupling in custom Anki editor internals may require careful mutation-safety fixes to prevent cross-config bleed.
+  - Risk: endpoint normalization/refresh changes could affect current selector fetch timing; mitigate by keeping refresh explicit and bounded to success path.
+
+### 2026-04-08 - Stage 9A Implementation (Harden Anki Settings Surface Before Stage 10)
+- Completed:
+  - Made `enableAnkiIntegration` visible in the normal settings surface (removed hidden debug-only gate) and replaced outdated “not implemented” copy.
+  - Removed proxy-facing controls from the visible Stage 9A Anki settings UI:
+    - `ankiProxyUrl`
+    - per-deck proxy toggle in `mining-input`
+  - Hardened `ankiUrlButton` into explicit endpoint test-and-refresh flow:
+    - normalize endpoint input into canonical AnkiConnect URL
+    - persist normalized `ankiUrl`
+    - perform reachability check (`version`)
+    - refresh all Anki deck/model/field selectors only on success
+    - show explicit failure feedback without silently refreshing dependent controls
+  - Added shared Anki endpoint normalization utility and reused it in request execution path to keep runtime behavior and settings behavior aligned.
+  - Made `mining-input` first-class in settings lifecycle by including it in the standard load/save wiring.
+  - Hardened `mining-input` mutation safety:
+    - copy/paste now deep-clones template targets
+    - pasted template targets no longer share references across editors
+    - unpack/pack paths clone template target arrays to avoid hidden coupling
+  - Decoupled mining editor endpoint source from automatic refresh:
+    - `fetch-url` now sets source only
+    - explicit `refreshFromUrl` performs fetch/rebuild when endpoint validation succeeds
+- Files changed:
+  - `src/views/settings.html`
+  - `src/views/settings.ts`
+  - `src/views/elements/html-mining-input-element.ts`
+  - `src/shared/anki/normalize-anki-connect-url.ts`
+  - `src/shared/anki/request.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Canonicalize Anki endpoint handling behind one shared normalizer so UI persistence and runtime requests do not diverge on URL interpretation.
+  - Keep endpoint validation/refresh explicit and user-triggered (`ankiUrlButton`) while still propagating normalized fetch source into Anki editors.
+  - Remove unsupported proxy controls from Stage 9A UI while preserving persisted schema compatibility (`proxy`/`ankiProxyUrl` fields remain in storage model).
+  - Preserve existing per-deck proxy values in editor serialization without exposing proxy editing in Stage 9A.
+- Blockers / open issues:
+  - No active blocker.
+  - Manual QA evidence for clean-profile and profile-switch settings flows is still recommended before marking Stage 9A fully closed.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+  - Static verification confirms Stage 9A directives implemented in code:
+    - visible Anki enable toggle
+    - hidden/deferred proxy controls
+    - endpoint normalize/test/refresh flow
+    - Anki custom editor wired into main settings load/save
+    - copy/paste isolation hardening for template targets
+- Next recommended step:
+  - Run manual Stage 9A UI verification checklist:
+    - clean-profile enablement flow
+    - reload/profile-switch persistence
+    - endpoint success/failure feedback
+    - selector refresh after endpoint validation
+    - template-target save/reload and copy/paste isolation checks
+  - If manual verification passes, mark Stage 9A complete and start Stage 10 preflight.
+- Handoff:
+  - Stage 9A implementation changes are landed and verified by lint/build.
+  - Next run should begin with manual settings-page validation for Stage 9A acceptance criteria, then proceed to Stage 10 only after Stage 9A closure is recorded.
+
+### 2026-04-08 - Stage 9A Follow-up Implementation (Audit Gap Closure: Initial Hydration + Endpoint Change Refresh)
+- Completed:
+  - Closed the two remaining audit gaps against Stage 9A directives:
+    - initial page-load hydration for Anki deck editors from persisted configuration
+    - dependent deck/model/field selector refresh on normal `ankiUrl` save changes (not only button-triggered validation)
+  - Added initialization synchronization in settings controller:
+    - waits for all settings field initialization promises to settle
+    - when Anki is enabled with a persisted endpoint, hydrates Anki mining editors from that endpoint on page load
+  - Added endpoint-change synchronization behavior in settings controller:
+    - saving `ankiUrl` now triggers Anki editor selector refresh with explicit error feedback
+    - enabling Anki integration with an existing endpoint also triggers selector synchronization
+    - explicit `ankiUrlButton` validation flow suppresses duplicate auto-refresh during the same save transaction
+  - Hardened mining editor value/render lifecycle:
+    - `onValueChanged` now unpacks into visible controls so persisted values render immediately
+    - missing select options are backfilled with the persisted value to avoid blanking saved config before fetch completes
+    - programmatic refresh uses non-dispatching pack path to avoid accidental persistence writes during sync refresh
+- Files changed:
+  - `src/views/settings.ts`
+  - `src/views/elements/html-mining-input-element.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Treat settings-page initialization completion as an explicit synchronization boundary before running Anki editor hydration.
+  - Keep explicit endpoint validation button as primary test-and-refresh UX, while still ensuring ordinary endpoint saves keep dependent selectors consistent.
+  - Prevent programmatic refresh paths from emitting synthetic change events that can cause unintended configuration writes.
+- Blockers / open issues:
+  - No active blocker.
+  - Manual UI verification remains recommended to confirm expected UX under unavailable Anki endpoint conditions.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+  - Code-level re-audit confirms prior Stage 9A findings are resolved:
+    - persisted editor values hydrate on open
+    - endpoint save changes now refresh dependent selectors
+- Next recommended step:
+  - Execute manual Stage 9A verification checklist and, if clean, mark Stage 9A complete and begin Stage 10 preflight.
+- Handoff:
+  - Stage 9A gaps identified in audit are now patched in code with passing lint/build.
+  - Next run should perform manual acceptance validation and then move forward to Stage 10 only after Stage 9A closure is recorded.
+
+### 2026-04-08 - Stage 9A Follow-up Implementation (Settings Sidebar Active Section Synchronization Fix)
+- Completed:
+  - Fixed settings TOC active-link logic so the highlighted sidebar entry tracks the actually visible section while scrolling.
+  - Added viewport-based active-section resolution fallback to prevent stale highlight states when IntersectionObserver callbacks do not switch sections reliably.
+  - Applied active-link synchronization on:
+    - scroll
+    - resize
+    - TOC click navigation
+    - settings binding/search visibility updates
+  - Ensured hidden/search-filtered TOC items are excluded from active selection.
+- Files changed:
+  - `src/views/settings.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Keep IntersectionObserver for lightweight section detection, but make viewport-position computation the final source-of-truth for active TOC highlighting.
+  - Use requestAnimationFrame-queued sync to avoid excessive recomputation on rapid scroll.
+- Blockers / open issues:
+  - No active blocker.
+  - Manual UI verification is still recommended across desktop and narrow layouts to confirm expected sidebar/highlight behavior.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+  - Visual-path logic now includes explicit fallback and sync hooks for the previously reported “Anki visible but not highlighted” case.
+- Next recommended step:
+  - Manually confirm the sidebar highlight updates correctly when scrolling into `#anki-integration` and while using search/toggle visibility paths.
+- Handoff:
+  - Reported sidebar indicator bug is patched in code and build-verified.
+  - Continue Stage 9A manual acceptance checks, then close Stage 9A before Stage 10 preflight.
+
+### 2026-04-08 - Stage 9A Follow-up Implementation (Move Anki Section Above Collapsed Blocks)
+- Completed:
+  - Reordered settings-page layout so `Anki Integration` appears above `Parsing`, `Features`, and `Other`.
+  - Reordered TOC links to match the new section order, placing `Anki` immediately after `Status Bar`.
+  - Applied only layout/order changes as requested; no Anki runtime/config behavior changes in this patch.
+- Files changed:
+  - `src/views/settings.html`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Prefer explicit section ordering to reduce ambiguous active-section behavior around collapsed details and to prioritize Anki setup visibility.
+- Blockers / open issues:
+  - No active blocker.
+  - If TOC highlight behavior still appears inconsistent after this ordering change, next step should be a focused visual-logic pass with live reproduction data.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Reload the settings page and confirm both section order and sidebar active highlight behavior in the new layout.
+- Handoff:
+  - Requested section move is complete and build-verified.
+  - Continue manual Stage 9A UI acceptance checks before Stage 10 preflight.
+
+### 2026-04-08 - Stage 9A Follow-up Implementation (TOC Active Indicator Stabilization for Small Bottom Sections)
+- Completed:
+  - Reworked settings TOC active-section selection to use deterministic document-order scroll position instead of visibility-size scoring.
+  - Added a bottom-of-page override so the final visible TOC section can become active reliably near page end.
+  - Removed IntersectionObserver-driven active-link switching for TOC state and kept requestAnimationFrame-queued sync on scroll/resize/click/binding updates.
+- Files changed:
+  - `src/views/settings.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Use section top-offset progression (`last section with top <= viewport anchor`) as source of truth for active TOC state.
+  - Avoid section-height/visibility-area weighting, which biases large sections and can starve small trailing sections.
+- Blockers / open issues:
+  - No active blocker.
+  - Manual UI retest is still required to confirm expected behavior across the exact viewport/zoom combination where this was reproduced.
+- Verification status:
+  - `npm run lint:fix` passes.
+  - `npm run lint` passes.
+- Next recommended step:
+  - Hard refresh settings page and verify that `Parsing`, `Features`, and `Other` become active as their headings cross the top anchor while scrolling.
+- Handoff:
+  - TOC active-indicator logic now uses deterministic scroll-position rules intended to resolve the reported small-section starvation.
+  - If issue persists, capture viewport height/zoom and we should add temporary debug logging for active-candidate calculation.
+
+### 2026-04-08 - Stage 9A Follow-up Implementation (TOC Click Regression: Features Forced to Other Near Page End)
+- Completed:
+  - Removed bottom-of-page fallback that force-selected the final TOC item.
+  - Kept deterministic section-position selection so clicked/visible `Features` is no longer overridden by `Other` just because the viewport is near the document end.
+- Files changed:
+  - `src/views/settings.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Do not auto-promote the last section based solely on “near page end”; active state should come from section top progression only.
+- Blockers / open issues:
+  - No active blocker.
+  - Manual confirmation in the same viewport is still required to ensure no further edge-case override remains.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Re-test TOC behavior by clicking `Features` and `Other` while both are visible near the bottom and confirm active state follows the targeted section.
+- Handoff:
+  - The page-end forced-last-section heuristic has been removed to resolve the reported `Features -> Other` mis-highlighting.
+
+### 2026-04-08 - Stage 9A Follow-up Implementation (TOC Scrollspy Rewrite After Broken Heuristics)
+- Completed:
+  - Replaced the latest TOC active-section heuristics with a simpler scrollspy rule based on a single viewport activation band.
+  - The active TOC item is now the last visible section whose heading has crossed that activation line, with fallback to the next upcoming visible section.
+  - Tied the activation line to the sticky search header plus a viewport-relative offset so tall and short sections use the same switching rule.
+  - Reviewed current IntersectionObserver guidance before patching and intentionally moved away from mixed “largest visible section” and “page end override” heuristics.
+- Files changed:
+  - `src/views/settings.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Use one deterministic activation line for TOC state instead of combining multiple competing heuristics.
+  - Keep the rule based on section heading/top progression, which is easier to reason about and less prone to starvation/override bugs than visible-area scoring.
+- Blockers / open issues:
+  - No active blocker.
+  - Manual confirmation is still required in the exact previously failing viewport to confirm the activation line placement feels right.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Hard refresh the settings page and verify active-state transitions for `Status Bar`, `Anki`, `Parsing`, `Features`, and `Other` while scrolling and clicking.
+- Handoff:
+  - The TOC logic has been rewritten around a single activation-band rule after the previous heuristics proved unstable.
+  - If another edge case remains, the next refinement should tune only the activation-line position rather than reintroducing multiple fallback rules.
+
+### 2026-04-08 - Stage 9A Follow-up Implementation (TOC Short Collapsible Sections: Track Heading Instead Of Container)
+- Completed:
+  - Updated TOC active-section tracking to use each section's heading trigger (`h6` or `summary`) rather than the outer section container.
+  - This specifically targets short collapsible sections like `Features` and `Other`, whose containers are too small to behave well under section-box-based tracking.
+  - Click navigation now resolves through the same section lookup helper used by the active-section logic to keep targeting consistent.
+- Files changed:
+  - `src/views/settings.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Use heading/summarised trigger elements as scrollspy anchors for collapsible sections.
+  - Keep one activation band, but evaluate it against the visible heading position rather than the total section block.
+- Blockers / open issues:
+  - No active blocker.
+  - Manual verification is still required to confirm the activation handoff between `Features` and `Other` feels correct in the current viewport.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Hard refresh the settings page and verify that `Features` becomes active when its summary crosses the activation band and hands off to `Other` only when `Other`'s summary does the same.
+- Handoff:
+  - TOC tracking now keys off section headings/summaries, which should be more reliable for short `details` sections than tracking the surrounding boxes.
+
+### 2026-04-08 - Repo Process Update Complete (`settings.ts` Mixed-EOL Lint Guidance Added)
+- Completed work:
+  - Added an explicit repository instruction to `AGENTS.md` documenting the recurring `src/views/settings.ts` mixed line-ending issue.
+  - Recorded the expected remediation path:
+    - treat repeated Prettier `Insert CR` failures in that file as a CRLF normalization issue
+    - normalize to CRLF before the final lint pass
+    - avoid wasting repeated fix loops on logic/formatting first
+- Files changed:
+  - `AGENTS.md`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Keep this as a repo-local operational rule in `AGENTS.md` so future runs see it before editing, rather than relying on chat memory.
+- Blockers / open issues:
+  - No blocker for this documentation change.
+  - Existing unrelated worktree changes remain in progress from prior settings/Anki work.
+- Verification status:
+  - Read-back verification of `AGENTS.md` confirms the new rule is present and clearly scoped.
+  - No code/build verification was needed because this run only changed repository guidance docs.
+- Next recommended step:
+  - On the next edit touching `src/views/settings.ts`, apply the documented CRLF normalization immediately if `Insert CR` lint errors appear.
+- Handoff:
+  - This run only updated repo instructions and the working log.
+  - Next run should read `AGENTS.md` first and follow the new `settings.ts` mixed-EOL guidance during any further settings-page work.
+
+### 2026-04-08 - Start-of-Run (Repo Config Hardening: Eliminate Recurring CRLF/Lint Drift)
+- Run intent:
+  - Fix the recurring `Insert CR` lint problem at the repository configuration level instead of relying on manual cleanup guidance.
+  - Inspect existing formatter/editor configuration and add the missing line-ending rules needed to keep source edits consistent.
+- Current implementation state:
+  - The repo already contains `.editorconfig` and `.prettierrc`.
+  - `.editorconfig` currently does not declare `end_of_line`.
+  - `.prettierrc` currently uses `"endOfLine": "auto"`, which permits inconsistent/mixed line endings to persist.
+  - No `.gitattributes` file currently exists to enforce checkout/normalization behavior in Git.
+- Exact goal of this run:
+  - Make line-ending expectations explicit in repo config so routine edits stop producing recurring Prettier `Insert CR` failures.
+- Blockers or prerequisites already recorded:
+  - No blocker for this work.
+  - Prior documentation-only mitigation exists in `AGENTS.md`, but it does not prevent the issue by itself.
+- Risks/assumptions carried in:
+  - Assumption: this repo is intended to use CRLF consistently in the current Windows-heavy workflow.
+  - Low risk: configuration-only repo hardening; runtime behavior should not change.
+
+### 2026-04-08 - Repo Config Hardening Complete (CRLF Enforcement + One-Time Normalization)
+- Completed work:
+  - Added explicit CRLF enforcement to `.editorconfig` via `end_of_line = crlf`.
+  - Changed `.prettierrc` from `"endOfLine": "auto"` to `"endOfLine": "crlf"`.
+  - Added `.gitattributes` so Git treats common tracked text/source files as CRLF on checkout.
+  - Performed a one-time normalization pass across tracked repo text/source files to align the current worktree with the new rule and eliminate the active lint failures.
+- Files changed:
+  - `.editorconfig`
+  - `.prettierrc`
+  - `.gitattributes`
+  - `docs/implementation-working-log.md`
+  - plus tracked text/source files touched by the one-time CRLF normalization pass
+- Architectural decisions made:
+  - Fix the problem at all three layers:
+    - editor defaults (`.editorconfig`)
+    - formatter expectations (`.prettierrc`)
+    - Git checkout normalization (`.gitattributes`)
+  - Prefer explicit CRLF policy over `auto`, because `auto` was allowing mixed-EOL drift and repeated Prettier `Insert CR` failures.
+- Blockers / open issues:
+  - No active blocker.
+  - This run produced a large line-ending-only diff across many tracked text files; future review/commit flow should treat those as normalization churn rather than logic changes.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Keep future edits under the new CRLF policy and avoid manual per-file fixes unless an out-of-policy file is introduced.
+  - When reviewing the current worktree, separate line-ending-only changes from functional code changes.
+- Handoff:
+  - The recurring `Insert CR` lint issue is now fixed at the repo-config level and the current tree has been normalized to match it.
+  - Next run should preserve the new CRLF policy and avoid reverting these config files unless the team intentionally switches the whole repo to LF instead.
+
+### 2026-04-08 - Start-of-Run (TOC Scrollspy Follow-up: Bottom-of-Page Handling For Short Collapsible Sections)
+- Run intent:
+  - Revisit the settings TOC active-state bug for short trailing sections (`Features`, `Other`) using current web guidance instead of continuing heuristic tweaks.
+  - Implement explicit bottom-of-page handling so short final sections can become active even when their headings cannot fully reach the normal activation line.
+- Current implementation state:
+  - TOC tracking already uses section headings/summaries rather than outer section boxes.
+  - The remaining failure mode is near the bottom of the page, where short trailing sections may still not become active because there is no remaining scroll room.
+- Exact goal of this run:
+  - Preserve heading-based activation during normal scrolling, but add a correct bottom-of-page rule that chooses the most visible section instead of keeping an earlier section active or blindly forcing the last one.
+- Blockers or prerequisites already recorded:
+  - No blocker.
+  - Prior fixes already removed the broken “always select the last section near page end” behavior; the next step must avoid reintroducing that regression.
+- Risks/assumptions carried in:
+  - Assumption: a hybrid rule is appropriate here:
+    - normal case: heading/summary threshold
+    - bottom-of-page case: section with greatest visible viewport occupancy
+  - Low risk to runtime behavior outside the settings page.
+
+### 2026-04-08 - TOC Scrollspy Follow-up Complete (Bottom Scroll Runway For Short Trailing Sections)
+- Completed work:
+  - Removed the size-based bottom-of-page fallback after identifying that it could still fail when `Features` and `Other` are similarly sized.
+  - Kept heading/summary-based activation as the primary scrollspy rule.
+  - Added explicit bottom scroll runway to the settings form so short trailing sections can actually reach the normal activation threshold.
+  - Replaced the old trailing spacer with a named runway element to make the intent explicit in markup and styling.
+- Files changed:
+  - `src/views/settings.ts`
+  - `src/views/settings.html`
+  - `src/views/settings.scss`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Treat insufficient scroll runway as the root cause for the final short-section activation bug.
+  - Prefer fixing the scroll geometry over adding another “which visible section wins” heuristic.
+- Blockers / open issues:
+  - No active blocker.
+  - Manual confirmation is still required to ensure the added runway feels acceptable visually and that `Features`/`Other` now activate correctly.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Hard refresh the settings page and verify that `Features` and `Other` can both become active by scrolling them up to the normal activation line.
+- Handoff:
+  - The TOC fix strategy now relies on heading-based activation plus added bottom scroll runway, not section-size ranking.
+  - If another edge case remains, the next refinement should tune runway height or activation offset rather than reintroducing visibility heuristics.
+
+### 2026-04-08 - Start-of-Run (Permanent Lint/EOL Fix First, Then TOC Last-Heading Repair)
+- Run intent:
+  - Permanently stop the recurring Prettier/ESLint line-ending failures before making any further TOC edits.
+  - After the lint/EOL issue is fixed at the repo level, remove the visual scroll-runway workaround and repair last-heading activation without adding trailing whitespace.
+- Current implementation state:
+  - The repo is currently configured for `CRLF` in `.editorconfig`, `.prettierrc`, and `.gitattributes`.
+  - In this environment, routine edits are still repeatedly introducing `Insert CR` lint failures, which indicates the repo policy is fighting the actual editor/tool write behavior.
+  - The current TOC workaround adds visible whitespace at the end of the settings page and still does not correctly activate the final heading in the reported case.
+- Exact goals of this run:
+  - Switch the repo to one consistent line-ending policy that matches the actual edit tooling and stops recurring lint churn.
+  - Remove the trailing-whitespace runway UI hack.
+  - Replace it with a bottom-of-page last-visible-heading rule for short trailing sections.
+- Blockers or prerequisites already recorded:
+  - No blocker.
+  - Stage 9A remains the relevant context because the bug is in the Anki/settings surface.
+- Risks/assumptions carried in:
+  - Assumption: `LF` is the correct permanent repo policy for this environment because it matches the observed write behavior and avoids repeated `Insert CR` churn.
+  - Low risk: line-ending normalization will produce a broad text-only diff once, but should stop recurring failures after that.
+
+### 2026-04-08 - Permanent Lint/EOL Fix + TOC Last-Heading Repair Complete
+- Completed work:
+  - Switched the repo-wide line-ending policy from `CRLF` to `LF` to match the actual write behavior in this environment.
+  - Updated:
+    - `.editorconfig`
+    - `.prettierrc`
+    - `.gitattributes`
+    - `AGENTS.md`
+  - Performed a one-time normalization pass to align tracked text/source files with the new `LF` policy.
+  - Removed the bottom whitespace/runway workaround from the settings page.
+  - Replaced the failed runway/size heuristics with a cleaner bottom-of-page rule:
+    - normal scrolling still uses heading/summary activation
+    - when the page is at the bottom, the last visible heading becomes the active TOC item
+- Files changed:
+  - `.editorconfig`
+  - `.prettierrc`
+  - `.gitattributes`
+  - `AGENTS.md`
+  - `src/views/settings.ts`
+  - `src/views/settings.html`
+  - `src/views/settings.scss`
+  - `docs/implementation-working-log.md`
+  - plus tracked text/source files touched by the one-time `LF` normalization pass
+- Architectural decisions made:
+  - Permanent fix for the recurring Prettier/ESLint failure is to align repo policy with the environment and use `LF` everywhere.
+  - For the TOC bug, fix the bottom-of-page case by selecting the last visible heading rather than adding fake scroll space or comparing section sizes.
+- Blockers / open issues:
+  - No active blocker.
+  - The one-time line-ending normalization still leaves a large text-only diff across the worktree that should be reviewed as normalization churn, not logic changes.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Hard refresh the settings page and verify that the last visible heading (`Other`) becomes active at the bottom of the page without any trailing whitespace being introduced.
+  - When reviewing the repo diff, separate the one-time `LF` normalization from functional code changes.
+- Handoff:
+  - The recurring `Insert CR` lint loop should now be permanently fixed because the repo policy is aligned with actual edit behavior.
+  - The TOC now uses a dedicated bottom-of-page last-visible-heading rule instead of the removed whitespace runway hack.
+
+### 2026-04-08 - Start-of-Run (TOC Hybrid Activation Line: Bottom Third Uses Lower Band)
+- Run intent:
+  - Implement a hybrid TOC activation rule for the settings page.
+  - Keep the current focus-area activation line for most of the document, but move the activation line lower once scroll progress enters the bottom third of the page.
+- Current implementation state:
+  - Repo line-ending/lint policy is now stable on `LF`.
+  - Current TOC logic uses heading-based tracking with a bottom-of-page exception, but that exception can still skip `Features` when `Other` becomes visible.
+- Exact goal of this run:
+  - Replace the current bottom special-case with a scroll-progress-based activation-line shift:
+    - top/middle of document: current activation line
+    - bottom third of document: lower activation line near the bottom of the viewport
+- Blockers or prerequisites already recorded:
+  - No blocker.
+  - Stage 9A remains the relevant stage context because this is still settings-surface behavior.
+- Risks/assumptions carried in:
+  - Assumption: the best UX compromise is a hybrid activation line rather than a fixed top-anchor or fixed mid-screen rule.
+  - Low risk outside the settings page.
+
+### 2026-04-08 - TOC Hybrid Activation Line Implemented
+- Completed work:
+  - Removed the previous bottom-of-page special-case selection rule.
+  - Implemented a hybrid activation line in `src/views/settings.ts`:
+    - normal scroll range: existing focus-area activation line
+    - bottom third of document: activation line shifts downward toward the lower viewport
+  - Used document scroll progress (`scrollY / (scrollHeight - innerHeight)`) to decide when the shift begins.
+  - Smoothed the transition through the final third instead of applying a hard one-step jump.
+- Files changed:
+  - `src/views/settings.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Keep heading-based tracking as the core rule.
+  - Solve the trailing short-section problem by moving the activation line during the bottom third of the document rather than adding whitespace or ranking visible sections.
+- Blockers / open issues:
+  - No active blocker.
+  - Manual validation is still required to confirm the transition point and lower activation position feel right for `Parsing`, `Features`, and `Other`.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Hard refresh the settings page and verify:
+    - mid-page behavior still matches reading focus
+    - `Features` is no longer skipped
+    - `Other` activates when expected near the bottom
+- Handoff:
+  - The TOC now uses a hybrid activation-line approach based on scroll progress instead of any bottom-of-page visibility ranking rule.
+  - If more tuning is needed, adjust only:
+    - bottom-third start threshold
+    - lower activation-line position
+    - interpolation shape
+
+### 2026-04-08 - Start-of-Run (TOC Hybrid Tuning: Lower Bottom-Third Activation Line)
+- Run intent:
+  - Keep the hybrid TOC approach but move the lower activation line farther down so collapsed trailing sections can still become active near the bottom.
+- Current implementation state:
+  - Hybrid activation-line logic is in place and working better than prior heuristics.
+  - Remaining issue: when `Parsing`, `Features`, and `Other` are all collapsed, the lower activation line is still not low enough to let `Other` become active reliably.
+- Exact goal of this run:
+  - Lower the bottom-third activation target without changing the overall hybrid architecture.
+- Blockers or prerequisites already recorded:
+  - No blocker.
+  - This is a tuning adjustment on top of the current Stage 9A settings-page TOC implementation.
+- Risks/assumptions carried in:
+  - Assumption: a modest downward adjustment of the lower activation line is sufficient.
+  - Low risk outside the settings page.
+
+### 2026-04-08 - TOC Hybrid Tuning Applied (Lower Bottom-Third Band)
+- Completed work:
+  - Lowered the bottom-third activation line from roughly `82%` to `90%` of viewport height.
+  - Kept the hybrid architecture unchanged:
+    - normal scroll range uses the original activation band
+    - bottom third interpolates toward the lower band
+- Files changed:
+  - `src/views/settings.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Prefer a narrow tuning adjustment to the lower band rather than changing the hybrid rule itself.
+- Blockers / open issues:
+  - No active blocker.
+  - Manual verification is still required for the fully collapsed `Parsing` / `Features` / `Other` case.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Hard refresh and verify that collapsed `Other` now becomes active near page bottom without breaking the `Features` handoff.
+- Handoff:
+  - The hybrid TOC rule is unchanged structurally; only the lower-band target has been moved farther down for short trailing collapsed sections.
+
+### 2026-04-08 - Start-of-Run (TOC Click Navigation: Stop Above Active Line)
+- Run intent:
+  - Fix TOC click navigation so clicking `Features` scrolls to a position where the next collapsed section (`Other`) does not immediately cross the active line.
+- Current implementation state:
+  - Scroll-driven hybrid activation is in place.
+  - Remaining issue is click positioning: native `scrollIntoView()` can place the clicked section too low, allowing the next collapsed heading to cross the activation band immediately.
+- Exact goal of this run:
+  - Replace default click scrolling with explicit offset-based scrolling that lands the clicked heading slightly above the current activation line.
+- Blockers or prerequisites already recorded:
+  - No blocker.
+  - This is a targeted interaction fix on top of the existing TOC logic.
+- Risks/assumptions carried in:
+  - Assumption: giving the clicked heading a small buffer above the activation line is enough to prevent immediate handoff to the next collapsed section.
+  - Low risk outside the settings page.
+
+### 2026-04-08 - TOC Click Navigation Fixed (Explicit Offset Scroll)
+- Completed work:
+  - Replaced TOC click navigation’s `scrollIntoView()` behavior with explicit `window.scrollTo(...)` targeting.
+  - Clicking a TOC item now scrolls the section heading to a controlled point above the current activation line instead of letting the browser drive the page all the way to the bottom.
+  - Kept the existing hybrid activation-line logic unchanged.
+- Files changed:
+  - `src/views/settings.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Use explicit offset-based scroll for TOC clicks because native `scrollIntoView()` can overshoot and land the page in a state where the next collapsed section immediately crosses the activation line.
+- Blockers / open issues:
+  - No active blocker.
+  - Manual verification is still required for TOC click behavior on `Features` and `Other`.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Hard refresh and verify that clicking `Features` no longer scrolls to the bottom and no longer causes `Other` to steal the active state immediately.
+- Handoff:
+  - TOC click navigation now uses explicit offset scroll targeting instead of `scrollIntoView()`.
+  - If more tuning is needed, adjust the click buffer rather than reverting to native scroll behavior.
+
+### 2026-04-08 - Start-of-Run (TOC Click Precision: Constrain Scroll By Next Heading)
+- Run intent:
+  - Make TOC click positioning more precise so clicking a section does not leave the next collapsed section close enough to steal activation immediately.
+- Current implementation state:
+  - TOC clicks now use explicit offset scrolling instead of `scrollIntoView()`.
+  - Remaining issue: the target position is still too approximate and can leave the next heading too near the activation line.
+- Exact goal of this run:
+  - Compute the next visible section heading during TOC clicks and cap the scroll position so that next heading remains safely below the active line.
+- Blockers or prerequisites already recorded:
+  - No blocker.
+  - This is a focused tuning pass on top of the explicit click-scroll behavior.
+- Risks/assumptions carried in:
+  - Assumption: using the next heading as a hard constraint is the most precise way to prevent premature handoff after click navigation.
+  - Low risk outside the settings page.
+
+### 2026-04-08 - TOC Click Precision Improved (Next-Heading Constraint)
+- Completed work:
+  - Updated TOC click scrolling to account for the next visible section heading.
+  - Click scroll target is now constrained so the next heading remains below the activation line with a small safety buffer.
+  - Increased the clicked-section landing buffer slightly to keep the selected heading comfortably above the active line.
+- Files changed:
+  - `src/views/settings.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Click navigation should be bounded by two conditions:
+    - place the clicked heading above the active line
+    - do not let the next visible heading cross that line immediately
+- Blockers / open issues:
+  - No active blocker.
+  - Manual verification is still required to confirm the scroll position now feels precise enough on `Features`/`Other`.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Hard refresh and verify that clicking `Features` lands in a position where `Other` stays below the active line until the user scrolls further.
+- Handoff:
+  - TOC click positioning is now constrained by the next visible heading rather than using only a generic click buffer.
+
+### 2026-04-08 - Start-of-Run (TOC Click Targeting: Decouple Click Offset From Hybrid Active Line)
+- Run intent:
+  - Fix the remaining overscroll on TOC clicks by separating click landing position from the hybrid scrollspy activation line.
+- Current implementation state:
+  - Scrollspy activation uses a hybrid line that moves lower in the bottom third of the page.
+  - TOC click scrolling is still too aggressive because it reuses that lowered activation line when computing click targets.
+- Exact goal of this run:
+  - Give TOC clicks their own stable offset higher in the viewport, while leaving the hybrid active-line logic unchanged for normal scrolling.
+- Blockers or prerequisites already recorded:
+  - No blocker.
+  - This is a narrow refinement of the existing TOC click-navigation behavior.
+- Risks/assumptions carried in:
+  - Assumption: the overscroll is caused primarily by sharing the lowered bottom-third activation line with click targeting.
+  - Low risk outside the settings page.
+
+### 2026-04-08 - TOC Click Targeting Updated (Separate Click Offset)
+- Completed work:
+  - Separated TOC click landing position from the hybrid scrollspy activation line.
+  - Clicks now use a stable higher click offset, while normal scroll tracking still uses the hybrid active line.
+  - Kept the next-heading constraint in place so the following collapsed section stays below the click landing threshold.
+- Files changed:
+  - `src/views/settings.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Click navigation and passive scrollspy should not share the same activation geometry once the passive rule changes in the bottom third of the page.
+- Blockers / open issues:
+  - No active blocker.
+  - Manual verification is still required to confirm click landing now feels precise enough.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Hard refresh and verify that clicking `Features` no longer scrolls too far down when near the bottom third of the document.
+- Handoff:
+  - TOC click landing now uses its own fixed higher offset rather than the lowered hybrid active line.
+
+### 2026-04-08 - Start-of-Run (TOC Click Constraint: Respect Hybrid Bottom Active Line)
+- Run intent:
+  - Remove the remaining mismatch between click landing and purple active-state resolution in the bottom third of the page.
+- Current implementation state:
+  - TOC clicks land at a stable higher offset.
+  - The active purple highlight is still resolved against the hybrid bottom-third activation line, so click landing and active-state geometry can diverge.
+- Exact goal of this run:
+  - Compute TOC click stopping position against the real hybrid activation line at the resulting scroll position.
+  - Ensure click scrolling stops at the maximum point where the following heading has not crossed that active line yet.
+- Blockers or prerequisites already recorded:
+  - No blocker.
+  - This is a precision refinement on top of the current hybrid TOC design.
+- Risks/assumptions carried in:
+  - Assumption: parameterizing the hybrid activation line by target scroll position and constraining against it will eliminate the click/highlight mismatch.
+  - Low risk outside the settings page.
+
+### 2026-04-08 - TOC Click Constraint Updated (Aligned To Hybrid Active Line)
+- Completed work:
+  - Parameterized the hybrid activation-line calculation by target scroll position.
+  - Updated TOC click scrolling so the maximum allowed destination is computed against the real hybrid active line at the resulting scroll position.
+  - Added a small refinement loop so the click stop position converges on the highest scroll point where the following heading has still not crossed the purple active line.
+- Files changed:
+  - `src/views/settings.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - The click-scroll constraint must be evaluated against the same geometry that determines the purple active state, otherwise grey click state and purple active state can diverge in the bottom third.
+- Blockers / open issues:
+  - No active blocker.
+  - Manual verification is still required to confirm the click/highlight mismatch is gone.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Hard refresh and verify that clicking `Features` near the bottom third stops at the highest position where `Other` has not yet crossed the hybrid purple active line.
+- Handoff:
+  - TOC click stopping logic is now constrained by the hybrid active line at the destination scroll position, not merely by a fixed offset or the current viewport state.
+
+### 2026-04-08 - TOC Focus-State Cleanup (Grey Marker Follows Active State)
+- Completed work:
+  - Changed TOC focus styling from `:focus` to `:focus-visible` so mouse-clicked links do not keep a persistent grey focus marker.
+  - Added cleanup logic during active-link sync to blur stale focused TOC links when they no longer match the active purple section.
+- Files changed:
+  - `src/views/settings.scss`
+  - `src/views/settings.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Keyboard focus styling should remain available, but mouse-click focus should not create a second persistent visual state that can drift away from the active TOC section.
+- Blockers / open issues:
+  - No active blocker.
+  - Manual verification is still required for the “click then scroll” interaction.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Hard refresh and verify that after clicking a TOC item and then scrolling, only the purple active marker remains in sync with the current section.
+- Handoff:
+  - The grey TOC marker is now treated as focus styling only and stale focused TOC links are blurred during scroll-driven active-link updates.

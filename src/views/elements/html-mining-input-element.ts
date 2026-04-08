@@ -42,12 +42,9 @@ export class HTMLMiningInputElement extends HTMLElement {
     readingInput: createElement('select'),
   };
   protected _fieldSelects = [this._selects.wordInput, this._selects.readingInput];
-  protected _proxyInput = createElement('input', {
-    attributes: {
-      type: 'checkbox',
-    },
-  });
-
+  protected _fetchUrl = '';
+  protected _proxyEnabled = false;
+  protected _suppressChangeEvent = false;
   protected _templateTargets: TemplateTarget[] = [];
 
   protected get _availableFields(): string[] {
@@ -75,6 +72,9 @@ export class HTMLMiningInputElement extends HTMLElement {
   public set fetchUrl(value: string) {
     this.setAttribute('fetch-url', value);
   }
+  public get fetchUrl(): string {
+    return this.getAttribute('fetch-url') ?? '';
+  }
 
   public set title(value: string) {
     this.setAttribute('title', value);
@@ -82,6 +82,19 @@ export class HTMLMiningInputElement extends HTMLElement {
 
   constructor() {
     super();
+  }
+
+  public async refreshFromUrl(ankiConnectUrl = this._fetchUrl): Promise<void> {
+    if (!ankiConnectUrl?.length) {
+      return;
+    }
+
+    await this.updateDecks(ankiConnectUrl);
+    await this.updateModels(ankiConnectUrl);
+    await this.updateFields(ankiConnectUrl, this.value.model);
+
+    this.unpackDeck();
+    this.packDeck(false);
   }
 
   public connectedCallback(): void {
@@ -130,7 +143,13 @@ export class HTMLMiningInputElement extends HTMLElement {
     });
 
     this._selects.modelInput.addEventListener('change', () => {
-      void this.updateFields(this.getAttribute('fetch-url')!, this.value.model).then(() =>
+      if (!this._fetchUrl.length) {
+        this.validateTemplatesThenPackDeck();
+
+        return;
+      }
+
+      void this.updateFields(this._fetchUrl, this.value.model).then(() =>
         this.validateTemplatesThenPackDeck(),
       );
     });
@@ -149,8 +168,6 @@ export class HTMLMiningInputElement extends HTMLElement {
 
       this.dispatchEvent(new Event('change'));
     });
-
-    this._proxyInput.addEventListener('change', () => this.packDeck());
   }
 
   protected buildDOM(): void {
@@ -191,14 +208,9 @@ export class HTMLMiningInputElement extends HTMLElement {
   protected buildHeaderBlock(): HTMLDivElement {
     return createElement('div', {
       style: {
-        display: 'flex',
-        justifyContent: 'space-between',
-        gap: '2em',
+        display: 'block',
       },
-      children: [
-        { tag: 'p', style: { flex: '1', opacity: '0.8' }, children: [{ tag: 'slot' }] },
-        this.buildProxyBlock(),
-      ],
+      children: [{ tag: 'p', style: { opacity: '0.8' }, children: [{ tag: 'slot' }] }],
     });
   }
 
@@ -220,26 +232,6 @@ export class HTMLMiningInputElement extends HTMLElement {
           innerText: label,
         },
         { tag: 'div', class: ['select'], children: [input] },
-      ],
-    });
-  }
-
-  protected buildProxyBlock(): HTMLDivElement {
-    return createElement('div', {
-      style: { flex: '1' },
-      children: [
-        {
-          tag: 'div',
-          class: ['checkbox'],
-          children: [
-            this._proxyInput,
-            {
-              tag: 'label',
-              attributes: { for: this._proxyInput.id },
-              innerText: 'Use proxy for mining into this deck',
-            },
-          ],
-        },
       ],
     });
   }
@@ -362,7 +354,7 @@ export class HTMLMiningInputElement extends HTMLElement {
   protected copyTemplate(): void {
     HTMLMiningInputElement.copiedDeckConfiguration = {
       model: this._selects.modelInput.value,
-      templateTargets: this._templateTargets,
+      templateTargets: this.cloneTemplateTargets(this._templateTargets),
     };
 
     displayToast('success', 'Template copied');
@@ -382,7 +374,9 @@ export class HTMLMiningInputElement extends HTMLElement {
     }
 
     if (HTMLMiningInputElement.copiedDeckConfiguration) {
-      this._templateTargets = HTMLMiningInputElement.copiedDeckConfiguration.templateTargets;
+      this._templateTargets = this.cloneTemplateTargets(
+        HTMLMiningInputElement.copiedDeckConfiguration.templateTargets,
+      );
 
       this.buildTemplateList();
       this.packDeck();
@@ -402,21 +396,16 @@ export class HTMLMiningInputElement extends HTMLElement {
     if (this._input && this._input.value !== newValue) {
       this._input.value = newValue;
 
-      this.dispatchEvent(new Event('change'));
+      if (!this._suppressChangeEvent) {
+        this.dispatchEvent(new Event('change'));
+      }
     }
-  }
-
-  protected async onFetchUrlChanged(_: string, ankiConnectUrl: string): Promise<void> {
-    if (!ankiConnectUrl) {
-      return;
-    }
-
-    await this.updateDecks(ankiConnectUrl);
-    await this.updateModels(ankiConnectUrl);
-    await this.updateFields(ankiConnectUrl, this.value.model);
 
     this.unpackDeck();
-    this.packDeck();
+  }
+
+  protected onFetchUrlChanged(_: string, ankiConnectUrl: string): void {
+    this._fetchUrl = ankiConnectUrl?.trim() ?? '';
   }
 
   protected async updateDecks(ankiConnectUrl: string): Promise<void> {
@@ -452,18 +441,23 @@ export class HTMLMiningInputElement extends HTMLElement {
     });
   }
 
-  protected packDeck(): void {
+  protected packDeck(dispatchChange = true): void {
+    this._suppressChangeEvent = !dispatchChange;
+
     this.value = {
       deck: this._selects.deckInput.value,
       model: this._selects.modelInput.value,
       wordField: this._selects.wordInput.value,
       readingField: this._selects.readingInput.value,
-      proxy: this._proxyInput.checked,
-      templateTargets: this._templateTargets,
+      proxy: this._proxyEnabled,
+      templateTargets: this.cloneTemplateTargets(this._templateTargets),
     };
+
+    this._suppressChangeEvent = false;
   }
 
   protected unpackDeck(): void {
+    const currentValue = this.value;
     const propagate = (
       key: keyof typeof this._selects,
       haystack: string[],
@@ -472,14 +466,51 @@ export class HTMLMiningInputElement extends HTMLElement {
       this._selects[key].value = haystack.includes(needle) ? needle : '';
     };
 
-    propagate('deckInput', this._decks, this.value.deck);
-    propagate('modelInput', this._models, this.value.model);
-    propagate('wordInput', this._fields, this.value.wordField);
-    propagate('readingInput', this._fields, this.value.readingField);
+    this.setSelectValue('deckInput', this._decks, currentValue.deck ?? '', propagate);
+    this.setSelectValue('modelInput', this._models, currentValue.model ?? '', propagate);
+    this.setSelectValue('wordInput', this._fields, currentValue.wordField ?? '', propagate);
+    this.setSelectValue('readingInput', this._fields, currentValue.readingField ?? '', propagate);
 
-    this._proxyInput.checked = this.value.proxy;
-    this._templateTargets = this.value.templateTargets;
+    this._proxyEnabled = currentValue.proxy === true;
+    this._templateTargets = this.cloneTemplateTargets(currentValue.templateTargets ?? []);
 
     this.buildTemplateList();
+  }
+
+  protected cloneTemplateTargets(templateTargets: TemplateTarget[]): TemplateTarget[] {
+    return templateTargets.map((target) => ({
+      field: target.field,
+      template: target.template,
+    }));
+  }
+
+  protected setSelectValue(
+    key: keyof typeof this._selects,
+    options: string[],
+    value: string,
+    propagate: (key: keyof typeof this._selects, haystack: string[], needle: string) => void,
+  ): void {
+    if (!value?.length) {
+      this._selects[key].value = '';
+
+      return;
+    }
+
+    if (!options.includes(value)) {
+      const hasOption = Array.from(this._selects[key].options).some(
+        (option) => option.value === value,
+      );
+
+      if (!hasOption) {
+        this._selects[key].appendChild(
+          createElement('option', {
+            attributes: { value },
+            innerText: value,
+          }),
+        );
+      }
+    }
+
+    propagate(key, options.includes(value) ? options : [...options, value], value);
   }
 }

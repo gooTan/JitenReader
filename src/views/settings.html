@@ -32,10 +32,10 @@
       <a href="#popup" data-show="jitenApiKey">Popup</a>
       <a href="#keybinds" data-show="jitenApiKey">Keybinds</a>
       <a href="#status-bar" data-show="jitenApiKey">Status Bar</a>
+      <a href="#anki-integration" data-show="enableAnkiIntegration">Anki</a>
       <a href="#parsing" data-show="jitenApiKey">Parsing</a>
       <a href="#features" data-show="jitenApiKey">Features</a>
       <a href="#other" data-show="jitenApiKey">Other</a>
-      <a href="#anki-integration" data-show="enableAnkiIntegration">Anki</a>
     </nav>
 
     <form>
@@ -117,7 +117,7 @@
           </div>
         </div>
 
-        <div id="DEBUG_ANKI" class="form-box-parent" style="display: none">
+        <div class="form-box-parent">
           <div class="form-box">
             <div>
               <div class="checkbox">
@@ -125,7 +125,9 @@
                 <label for="enableAnkiIntegration">Mine into Anki instead of Jiten</label>
               </div>
             </div>
-            <p style="opacity: 0.8">Anki will be implemented at a later point in time.</p>
+            <p style="opacity: 0.8">
+              Enable this to configure Anki and use Anki as the active review backend.
+            </p>
           </div>
         </div>
       </div>
@@ -652,6 +654,83 @@
         </div>
       </div>
 
+      <div id="anki-integration" data-show="enableAnkiIntegration" class="section">
+        <h6>Anki Integration</h6>
+
+        <div class="form-box-parent">
+          <div class="form-box">
+            <div>
+              <label for="ankiUrl">AnkiConnect Endpoint URL</label>
+              <div class="inline-group">
+                <input type="text" id="ankiUrl" name="ankiUrl" />
+                <div>
+                  <input
+                    type="button"
+                    id="ankiUrlButton"
+                    class="button outline small"
+                    value="⭯"
+                  />
+                </div>
+              </div>
+              <p style="opacity: 0.8; margin-bottom: 0">
+                To find your AnkiConnect endpoint URL, go to Anki -> Tools -> Add-ons ->
+                AnkiConnect -> Config.
+              </p>
+              <p style="opacity: 0.8; margin-bottom: 0">
+                Enter the <code>webBindAddress</code> as well as the <code>webBindPort</code> as
+                <code>webBindAddress:webBindPort</code> - the default is
+                <code>127.0.0.1:8765</code>.
+              </p>
+              <p style="opacity: 0.8; margin-bottom: 0">
+                Use the refresh button to test the endpoint and reload deck/model/field selectors.
+              </p>
+              <p style="opacity: 0.8; margin-bottom: 0">
+                Install the
+                <a href="https://ankiweb.net/shared/info/2055492159" target="_blank"
+                >AnkiConnect</a
+                >
+                add-on if you haven't already.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div data-show="ankiUrl && enableAnkiIntegration">
+          <h6>Mining</h6>
+          <mining-input id="ankiMiningConfig" name="ankiMiningConfig" title="Mining Deck">
+            <p>This is your <b>mining deck</b>. Cards you mine will be saved here.</p>
+            <p>
+              Words from this deck will be displayed according to their learning state in Anki.
+            </p>
+            <p>The Word and Reading configuration will also be used to look up words in Anki.</p>
+          </mining-input>
+          <mining-input
+            id="ankiNeverForgetConfig"
+            name="ankiNeverForgetConfig"
+            title="Never Forget Deck"
+          >
+            <p>
+              This is your <b>never forget deck</b>. Cards you won't ever forget will be saved
+              here.
+            </p>
+            <p>Words from this deck will be displayed as known.</p>
+            <p>The Word and Reading configuration will also be used to look up words in Anki.</p>
+          </mining-input>
+          <mining-input
+            id="ankiBlacklistConfig"
+            name="ankiBlacklistConfig"
+            title="Blacklist Deck"
+          >
+            <p>
+              This is your <b>blacklist deck</b>. Cards you don't want to learn will be saved
+              here.
+            </p>
+            <p>Words from this deck will be displayed as suspended.</p>
+            <p>The Word and Reading configuration will also be used to look up words in Anki.</p>
+          </mining-input>
+        </div>
+      </div>
+
       <details id="parsing" class="section-collapsible" data-show="jitenApiKey">
         <summary>Parsing</summary>
         <div class="form-box-parent">
@@ -774,110 +853,6 @@
           </div>
         </div>
       </details>
-
-      <div id="anki-integration" data-show="enableAnkiIntegration" class="section">
-        <h6>Anki Integration</h6>
-
-        <div class="form-box-parent">
-          <div class="form-box">
-            <div>
-              <label for="ankiUrl">AnkiConnect Endpoint URL</label>
-              <div class="inline-group">
-                <input type="text" id="ankiUrl" name="ankiUrl" />
-                <div>
-                  <input
-                    type="button"
-                    id="ankiUrlButton"
-                    class="button outline small"
-                    value="⭯"
-                  />
-                </div>
-              </div>
-              <p style="opacity: 0.8; margin-bottom: 0">
-                To find your AnkiConnect endpoint URL, go to Anki -> Tools -> Add-ons ->
-                AnkiConnect -> Config.
-              </p>
-              <p style="opacity: 0.8; margin-bottom: 0">
-                Enter the <code>webBindAddress</code> as well as the <code>webBindPort</code> as
-                <code>webBindAddress:webBindPort</code> - the default is
-                <code>127.0.0.1:8765</code>.
-              </p>
-              <p style="opacity: 0.8; margin-bottom: 0">
-                Install the
-                <a href="https://ankiweb.net/shared/info/2055492159" target="_blank"
-                >AnkiConnect</a
-                >
-                add-on if you haven't already.
-              </p>
-            </div>
-          </div>
-
-          <div class="form-box">
-            <div>
-              <label for="ankiProxyUrl">AnkiConnect Endpoint Proxy</label>
-              <div class="inline-group">
-                <input type="text" id="ankiProxyUrl" name="ankiProxyUrl" />
-                <div>
-                  <input
-                    type="button"
-                    id="ankiProxyUrlButton"
-                    class="button outline small"
-                    value="⭯"
-                  />
-                </div>
-              </div>
-              <p style="opacity: 0.8; margin-bottom: 0">
-                You can define an additional proxy for the AnkiConnect endpoint. This is useful if
-                you are using asbplayer's
-                <a
-                  href="https://github.com/killergerbah/asbplayer?tab=readme-ov-file#advanced-features"
-                  target="_blank"
-                >auto capture option</a
-                >, for example.
-              </p>
-              <p style="opacity: 0.8; margin-bottom: 0">
-                With this, you can tunnel only a select few requests through the proxy to avoid
-                triggering captures on blacklist items, for example.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div data-show="ankiUrl && enableAnkiIntegration">
-          <h6>Mining</h6>
-          <mining-input id="ankiMiningConfig" name="ankiMiningConfig" title="Mining Deck">
-            <p>This is your <b>mining deck</b>. Cards you mine will be saved here.</p>
-            <p>
-              Words from this deck will be displayed according to their learning state in Anki.
-            </p>
-            <p>The Word and Reading configuration will also be used to look up words in Anki.</p>
-          </mining-input>
-          <mining-input
-            id="ankiNeverForgetConfig"
-            name="ankiNeverForgetConfig"
-            title="Never Forget Deck"
-          >
-            <p>
-              This is your <b>never forget deck</b>. Cards you won't ever forget will be saved
-              here.
-            </p>
-            <p>Words from this deck will be displayed as known.</p>
-            <p>The Word and Reading configuration will also be used to look up words in Anki.</p>
-          </mining-input>
-          <mining-input
-            id="ankiBlacklistConfig"
-            name="ankiBlacklistConfig"
-            title="Blacklist Deck"
-          >
-            <p>
-              This is your <b>blacklist deck</b>. Cards you don't want to learn will be saved
-              here.
-            </p>
-            <p>Words from this deck will be displayed as suspended.</p>
-            <p>The Word and Reading configuration will also be used to look up words in Anki.</p>
-          </mining-input>
-        </div>
-      </div>
 
       <div style="margin-top: 32px"></div>
     </form>
