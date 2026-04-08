@@ -131,6 +131,34 @@
   - suspended/buried frontend surfacing
 
 ## Run History
+### 2026-04-08 - Start-of-Run (Stage 10 Structural Refactor: Split `anki-review-backend.ts`)
+- Stage:
+  - Stage 10 - Complete Anki Read-Side Identity.
+- Run intent:
+  - Refactor `src/background-worker/review-backend/anki-review-backend.ts` into smaller internal modules without changing the public backend contract or current Stage 10 runtime behavior.
+- Current implementation state:
+  - Stage 10 read-side identity behavior is already in place and currently verified by lint/build.
+  - `anki-review-backend.ts` has grown into a large mixed-responsibility file containing:
+    - readiness/context loading
+    - cache-backed Anki read repository work
+    - readonly lookup planning
+    - candidate resolution
+    - scheduler/state classification
+- Exact goal of this run:
+  - Turn `AnkiReviewBackend` into a thin orchestrator and extract:
+    - read context/readiness
+    - read repository/caches
+    - readonly lookup planning
+    - term resolution/state classification
+  - Keep the public `ReviewBackend` contract unchanged.
+  - Preserve Stage 10 output semantics and cache behavior exactly.
+- Blockers or prerequisites already recorded:
+  - Stage 10 remains the relevant stage context and no active blocker is recorded.
+  - Functional behavior should not change in this run; this is a structural refactor only.
+- Risks/assumptions carried in:
+  - Assumption: the current backend logic is correct enough that the safest refactor is extraction-with-parity rather than any behavior redesign.
+  - Risk: logic split could accidentally change cache invalidation or resolution semantics; mitigation is to keep helper interfaces narrow and verify with lint/build after extraction.
+
 ### 2026-04-08 - Stage 10 Follow-up Fixes (Derived Matching Resilience + Single-Select Templates)
 - Completed work:
   - Fixed readonly-config readiness so invalid explicit override rows no longer disable otherwise valid derived read-side matching.
@@ -3511,3 +3539,76 @@ pm run build passes.
   - Hard refresh and verify that after clicking a TOC item and then scrolling, only the purple active marker remains in sync with the current section.
 - Handoff:
   - The grey TOC marker is now treated as focus styling only and stale focused TOC links are blurred during scroll-driven active-link updates.
+
+### 2026-04-08 - Completed (Stage 10 Structural Refactor: Split `anki-review-backend.ts`)
+- Completed work:
+  - Refactored `AnkiReviewBackend` into a thin coordinator that now delegates read readiness, Anki read I/O, lookup planning, and term-resolution/state-tag logic to dedicated internal modules.
+  - Added `anki-read-context.ts` for readonly probe readiness, rollover-hour loading, collection-creation loading, and due-date evaluation.
+  - Added `anki-read-repository.ts` for cached `findNotes`, `notesInfo`, `cardsInfo`, interval, and model-template reads.
+  - Added `anki-read-planner.ts` for readonly lookup config projection, query-plan generation, term normalization, and final resolution-map assembly.
+  - Added `anki-term-resolver.ts` for candidate selection, ambiguity diagnostics, and Stage 10 state-tag construction.
+  - Added `anki-review-backend.constants.ts` and `anki-review-backend.internal-types.ts` to centralize policy constants and non-public helper types.
+- Files changed:
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+  - `src/background-worker/review-backend/anki-read-context.ts`
+  - `src/background-worker/review-backend/anki-read-repository.ts`
+  - `src/background-worker/review-backend/anki-read-planner.ts`
+  - `src/background-worker/review-backend/anki-term-resolver.ts`
+  - `src/background-worker/review-backend/anki-review-backend.constants.ts`
+  - `src/background-worker/review-backend/anki-review-backend.internal-types.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Kept the public `ReviewBackend` interface and Stage 10 term-resolution payload contract unchanged while moving stateful concerns into two small classes and leaving planner/resolver logic as pure helper modules.
+  - Preserved existing cache TTLs, concurrency limits, and grade-card invalidation semantics during the extraction rather than folding in behavioral cleanups during the refactor.
+  - Left the readonly-config merge policy in shared code and treated the planner as a consumer only, not a second source of config interpretation.
+- Blockers / open issues:
+  - No active blocker for the structural refactor itself.
+  - There is still no dedicated unit-test harness in this repo for the extracted planner/context/resolver modules, so verification remains lint/build plus future manual Anki validation.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Run manual Anki-backed regression checks for Stage 10 scenarios, especially ambiguous matches, non-zero template ord matching, and post-grade state refresh.
+- Handoff:
+  - `anki-review-backend.ts` is now down to orchestration only; future behavior changes should usually land in the new helper modules instead of rebuilding coordinator complexity.
+
+### 2026-04-08 - Start-of-Run (Stage 10 Follow-up: Restore Fresh `getCardState()` Reads)
+- Stage:
+  - Stage 10 - Complete Anki Read-Side Identity.
+- Run intent:
+  - Fix the refactor regression where `getCardState()` started serving cached card info instead of forcing a fresh Anki read.
+- Current implementation state:
+  - Stage 10 behavior and the structural split are in place.
+  - Audit found one regression: popup/state refresh can now observe stale card state for up to the repository cache TTL because `getCardState()` uses cached repository reads.
+- Exact goal of this run:
+  - Restore fresh card-state reads for `getCardState()` while keeping the new repository/context/planner/resolver module boundaries intact.
+  - Preserve the rest of the refactor and Stage 10 read-side identity contract unchanged.
+- Blockers or prerequisites already recorded:
+  - No blocker.
+  - Verification should confirm lint/build still pass after the targeted fix.
+- Risks/assumptions carried in:
+  - Assumption: a small repository API addition for uncached single-card reads is safer than partially inlining old logic back into the coordinator.
+  - Low risk because the change is isolated to card-state refresh behavior.
+
+### 2026-04-08 - Completed (Stage 10 Follow-up: Restored Fresh `getCardState()` Reads)
+- Completed work:
+  - Added a repository-level fresh single-card read path so `getCardState()` once again fetches authoritative current Anki card state instead of serving card-info cache entries for up to the normal lookup TTL.
+  - Kept the structural refactor intact by fixing the regression inside the repository/coordinator boundary rather than re-inlining old backend logic.
+  - Updated the fresh read path to repopulate the card cache after the uncached fetch so later cache-backed reads still benefit from the latest response.
+- Files changed:
+  - `src/background-worker/review-backend/anki-read-repository.ts`
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - `getCardState()` is a refresh-sensitive path and should bypass normal cached card-info reads even though the bulk parse lookup flow remains cache-backed.
+  - The repository now exposes a small explicit fresh-read API rather than overloading `readCardsIndexed()` with mixed cache policies.
+- Blockers / open issues:
+  - No active blocker.
+  - Manual Anki verification is still recommended to confirm popup state refresh now reacts immediately to external card changes.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Verify with a live Anki profile that `getCardState()` reflects immediate queue/state changes after external edits and after grade submissions.
+- Handoff:
+  - The refactor regression is fixed; `getCardState()` now uses a fresh repository read while the parse lookup pipeline remains cache-backed.
