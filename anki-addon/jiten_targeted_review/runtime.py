@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 
@@ -56,3 +57,59 @@ class AnkiCollectionRuntime:
         if not deck:
             return ''
         return str(deck.get('name', ''))
+
+    def get_collection_creation_time(self) -> int:
+        for candidate in (
+            self._get_collection_creation_from_db(),
+            self._normalise_collection_creation_time(getattr(self._mw.col, 'crt', None)),
+            self._normalise_collection_creation_time(getattr(self._mw.col, 'created', None)),
+        ):
+            if candidate is not None:
+                return candidate
+
+        raise RuntimeError('Collection creation time is unavailable.')
+
+    def _get_collection_creation_from_db(self) -> int | None:
+        try:
+            raw = self._mw.col.db.scalar('select crt from col')
+        except Exception:
+            return None
+
+        return self._normalise_collection_creation_time(raw)
+
+    @staticmethod
+    def _normalise_collection_creation_time(raw: Any) -> int | None:
+        if raw is None:
+            return None
+
+        if isinstance(raw, bool):
+            return None
+
+        if isinstance(raw, str):
+            raw = raw.strip()
+            if not raw:
+                return None
+
+        try:
+            numeric = float(raw)
+        except (TypeError, ValueError):
+            return None
+
+        if not math.isfinite(numeric) or numeric <= 0:
+            return None
+
+        value = int(numeric)
+
+        # Millisecond epoch.
+        if value >= 1_000_000_000_000:
+            return value
+
+        # Second epoch.
+        if value >= 1_000_000_000:
+            return value
+
+        # Epoch day number.
+        if value >= 10_000:
+            return value * 86_400
+
+        return None

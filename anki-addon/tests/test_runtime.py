@@ -15,17 +15,26 @@ class _FakeDb:
         self._scalar_result = scalar_result
         self._should_raise = should_raise
 
-    def scalar(self, _query: str, _card_id: int) -> object:
+    def scalar(self, _query: str, *_args: object) -> object:
         if self._should_raise:
             raise RuntimeError('db unavailable')
         return self._scalar_result
 
 
 class _FakeCol:
-    def __init__(self, db: _FakeDb, card: object | None = None, get_card_error: Exception | None = None):
+    def __init__(
+        self,
+        db: _FakeDb,
+        card: object | None = None,
+        get_card_error: Exception | None = None,
+        crt: object | None = None,
+        created: object | None = None,
+    ):
         self.db = db
         self._card = card
         self._get_card_error = get_card_error
+        self.crt = crt
+        self.created = created
 
     def get_card(self, _card_id: int) -> object | None:
         if self._get_card_error is not None:
@@ -57,6 +66,25 @@ class RuntimeTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, 'storage failure'):
             runtime.get_card(1001)
+
+    def test_get_collection_creation_time_prefers_db_value(self) -> None:
+        mw = SimpleNamespace(col=_FakeCol(db=_FakeDb(scalar_result=1_708_637_439), crt=12345))
+        runtime = AnkiCollectionRuntime(mw)
+
+        self.assertEqual(runtime.get_collection_creation_time(), 1_708_637_439)
+
+    def test_get_collection_creation_time_falls_back_to_epoch_day_cst(self) -> None:
+        mw = SimpleNamespace(col=_FakeCol(db=_FakeDb(should_raise=True), crt=19_000))
+        runtime = AnkiCollectionRuntime(mw)
+
+        self.assertEqual(runtime.get_collection_creation_time(), 19_000 * 86_400)
+
+    def test_get_collection_creation_time_raises_when_unavailable(self) -> None:
+        mw = SimpleNamespace(col=_FakeCol(db=_FakeDb(should_raise=True), crt=None, created=None))
+        runtime = AnkiCollectionRuntime(mw)
+
+        with self.assertRaisesRegex(RuntimeError, 'Collection creation time is unavailable'):
+            runtime.get_collection_creation_time()
 
 
 if __name__ == '__main__':

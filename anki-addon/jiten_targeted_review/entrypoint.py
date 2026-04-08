@@ -7,6 +7,7 @@ from .runtime import AnkiCollectionRuntime
 from .service import handle_request
 
 ACTION_NAME = 'jitenTargetedReviewWriteV1'
+COLLECTION_CREATION_TIME_ACTION_NAME = 'getCollectionCreationTime'
 
 
 def handle_targeted_review_write(payload: dict[str, Any]) -> dict[str, Any]:
@@ -17,6 +18,13 @@ def handle_targeted_review_write(payload: dict[str, Any]) -> dict[str, Any]:
     return handle_request(payload, runtime)
 
 
+def handle_get_collection_creation_time() -> int:
+    from aqt import mw  # type: ignore
+
+    runtime = AnkiCollectionRuntime(mw)
+    return runtime.get_collection_creation_time()
+
+
 def register_action(actions: MutableMapping[str, Callable[..., Any]]) -> None:
     actions[ACTION_NAME] = handle_targeted_review_write
-
+    actions[COLLECTION_CREATION_TIME_ACTION_NAME] = handle_get_collection_creation_time

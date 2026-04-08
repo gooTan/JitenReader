@@ -1812,3 +1812,143 @@ pm run build passes.
 - Handoff:
   - Requested robust fix for issue 3 is implemented.
   - Stats refresh is now synchronized with completed highlighting instead of best-effort timing.
+
+### 2026-04-07 - Stage 9 Follow-up Start-of-Run (AnkiConnect Compatibility Shim for getCollectionCreationTime)
+- Stage:
+  - Stage 9 - Add targeted refresh, failure handling, and hybrid UX clarity.
+- Plan for this run:
+  - Add add-on side compatibility action for `getCollectionCreationTime` so strict Anki availability probing no longer fails on AnkiConnect builds that lack this action.
+  - Register and handler-patch the shim alongside existing targeted review action wiring.
+  - Keep payload/response semantics minimal and deterministic for compatibility.
+  - Verify with addon unit tests plus lint/build.
+- Prerequisite observations:
+  - Live probe confirms AnkiConnect exposes `jitenTargetedReviewWriteV1` but not `getCollectionCreationTime`.
+  - Extension currently treats missing `getCollectionCreationTime` as backend unavailable by design.
+- Risks/assumptions carried in:
+  - Assumption: compatibility shim should expose collection creation time in milliseconds where possible and remain tolerant of older collection objects.
+  - Risk: collection-runtime differences across Anki versions; mitigated by layered extraction fallback and deterministic errors.
+
+### 2026-04-07 - Stage 9 Follow-up Implementation (AnkiConnect Compatibility Shim for getCollectionCreationTime)
+- Completed:
+  - Added add-on compatibility action `getCollectionCreationTime` in entrypoint registration so strict extension-side availability probing can succeed on AnkiConnect builds that do not natively provide this action.
+  - Added runtime collection-creation-time extraction with layered fallbacks:
+    - DB probe (`select crt from col`)
+    - collection attributes (`col.crt`, `col.created`)
+  - Added normalization safeguards for multiple timestamp formats (milliseconds epoch, seconds epoch, epoch-day numbers).
+  - Kept deterministic error behavior when no valid collection creation time can be resolved.
+  - Updated both add-on bootstrap registration modules to register the compatibility action alongside targeted review action.
+  - Added runtime unit coverage for collection creation time resolution/fallback/error paths.
+  - Updated add-on README to document compatibility action exposure.
+  - Deployed updated add-on runtime files into `%APPDATA%\Anki2\addons21\jiten_targeted_review` for immediate local testing.
+- Files changed:
+  - `anki-addon/jiten_targeted_review/runtime.py`
+  - `anki-addon/jiten_targeted_review/entrypoint.py`
+  - `anki-addon/__init__.py`
+  - `anki-addon/jiten_targeted_review/__init__.py`
+  - `anki-addon/tests/test_runtime.py`
+  - `anki-addon/README.md`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Provide compatibility action in add-on layer rather than weakening strict extension-side Anki scheduling capability checks.
+  - Use layered extraction and format normalization in runtime adapter to tolerate Anki version/storage variance while preserving explicit failure when unavailable.
+- Blockers / open issues:
+  - No active blocker.
+  - Requires Anki restart/reload for active process to pick up copied files.
+- Verification status:
+  - `py -3 -m unittest discover -s anki-addon/tests -p "test_*.py"` passes (`13` tests).
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Restart Anki, then re-run `apiReflect` and confirm `getCollectionCreationTime` appears in action list and returns numeric result.
+- Handoff:
+  - Compatibility shim is implemented and deployed.
+  - Fallback-to-Jiten due to missing `getCollectionCreationTime` should clear after Anki restart if addon loads successfully.
+
+### 2026-04-07 - Stage 9 Follow-up Start-of-Run (Anki Young/Mature State-Tag Correctness)
+- Stage:
+  - Stage 9 - Add targeted refresh, failure handling, and hybrid UX clarity.
+- Plan for this run:
+  - Investigate and fix incorrect Anki card-state tag classification where cards can be labeled `young` despite mature intervals.
+  - Ensure Anki-backed state tags (`young`/`mature` plus `due`) are derived from authoritative Anki scheduling fields.
+  - Keep behavior transparent and non-misleading under ambiguity/failure paths.
+  - Verify with lint/build and targeted script checks.
+- Prerequisite observations:
+  - User-reported live UI evidence shows a mature-interval card displaying a `young` badge.
+  - Prior scheduling hardening focused due semantics and capability gating, but state-tag maturity classification may still be over-simplified.
+- Risks/assumptions carried in:
+  - Assumption: maturity classification should be interval-based under Anki semantics (mature threshold 21 days).
+  - Risk: queue/type-specific edge cases; mitigation is to centralize and explicitly gate maturity classification logic.
+
+### 2026-04-07 - Stage 9 Follow-up Implementation (Anki Young/Mature State-Tag Correctness)
+- Completed:
+  - Replaced hardcoded Anki `young` tag assignment in scheduling state paths with interval-aware classification sourced from Anki.
+  - Added AnkiConnect `getIntervals` integration in shared API layer and backend lookup flow.
+  - Added interval caching in `AnkiReviewBackend` and invalidation alongside existing cache resets.
+  - Updated mapped-card and targeted-refresh state tag generation to derive:
+    - `due` from queue/due scheduling semantics
+    - `young`/`mature` from Anki interval threshold (`>= 21` days => `mature`)
+  - Hardened ambiguous-target state tags so maturity is shown only when all candidates agree; otherwise only deterministic shared tags (e.g. `due`) are emitted.
+  - Added parse metrics field `intervalRequests` for observability of maturity lookups.
+- Files changed:
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+  - `src/shared/anki/api.types.ts`
+  - `src/shared/anki/get-intervals.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Use Anki interval data as the sole source of truth for young/mature classification under Anki backend mode.
+  - Prefer omission of maturity in ambiguous multi-target cases when candidates disagree, to avoid misleading certainty.
+  - Keep interval lookups cached with existing short-lived lookup TTL and boundary invalidation behavior.
+- Blockers / open issues:
+  - No active blocker.
+  - Live UI verification is still recommended on the reported term/card to confirm mature badge display after reparse/refresh.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Live-check the previously reported card (`今日`/`早い` cases) and confirm mature cards now show `mature` (and `due` only when actually due).
+- Handoff:
+  - Young/mature labeling bug in Anki path is fixed in backend mapping + refresh logic.
+  - If any mismatch remains, next audit point should be UI rendering/state cache invalidation timing rather than scheduler classification.
+
+### 2026-04-07 - Stage 9 Follow-up Start-of-Run (Anki New-State Truth Alignment)
+- Stage:
+  - Stage 9 - Add targeted refresh, failure handling, and hybrid UX clarity.
+- Plan for this run:
+  - Align Anki backend state-tag semantics so terms not mapped to Anki are treated as `new`.
+  - Ensure mapped Anki cards in Anki new queue are tagged `new` (not `young`).
+  - Preserve due/maturity classification for non-new queues and keep fallback/error behavior transparent.
+  - Verify with lint/build.
+- Prerequisite observations:
+  - Current Anki resolution emits `young`/`mature`/`due` but does not emit `new` for unmapped or queue-new cards.
+  - User expectation and product semantics require `new` for both not-in-Anki and Anki-new-card cases.
+- Risks/assumptions carried in:
+  - Assumption: queue `0` represents Anki new state in the extension-side scheduling model.
+  - Risk: ambiguous candidate sets may contain mixed maturity/new states; mitigation is conservative merged-tag emission.
+
+### 2026-04-07 - Stage 9 Follow-up Implementation (Anki New-State Truth Alignment)
+- Completed:
+  - Added explicit Anki queue-new handling so mapped Anki cards in queue `0` are tagged `new` instead of being forced into young/mature classification.
+  - Updated Anki state-tag synthesis to derive scheduling tag by queue-first semantics:
+    - queue `0` => `new`
+    - non-new queues => maturity from Anki interval (`young`/`mature`) plus `due` when applicable.
+  - Updated ambiguous-target merge logic to carry `new` when all candidates agree.
+  - Updated Anki unmapped resolution to return `new` so terms not present in Anki are represented as new in Anki mode.
+- Files changed:
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Prioritize queue identity from Anki as first-class scheduling truth; do not infer non-new maturity for queue-new cards.
+  - Represent unmapped-in-Anki terms as `new` in Anki backend mode to match user-facing semantics.
+  - Keep `due` orthogonal and queue-driven while preserving existing strict scheduling context checks.
+- Blockers / open issues:
+  - No active blocker.
+  - Mature threshold (`21` days) remains explicit constant for non-new cards; this follows Anki convention but is still a project-side boundary.
+- Verification status:
+  - `npm run lint:fix` passes.
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Live-check one mapped queue-new card and one unmapped term to confirm both render `new` and no accidental `young` tag appears.
+- Handoff:
+  - Requested Anki new-state behavior is now implemented in backend mapping and refresh paths.
+  - If any mismatch remains in UI, next likely surface is stale registry state or cache-refresh timing rather than backend classification.

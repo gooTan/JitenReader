@@ -4,6 +4,7 @@ type ModelFieldNamesRequest = { modelName: string };
 type FindNotesRequest = { query: string };
 type NotesInfoRequest = { notes: number[] };
 type CardsInfoRequest = { cards: number[] };
+type GetIntervalsRequest = { cards: number[] };
 type MultiRequest = {
   actions: {
     action: string;
@@ -103,6 +104,7 @@ export type AnkiEndpoints = {
   findNotes: [FindNotesRequest, number[]];
   notesInfo: [NotesInfoRequest, AnkiNoteInfo[]];
   cardsInfo: [CardsInfoRequest, AnkiCardInfo[]];
+  getIntervals: [GetIntervalsRequest, number[]];
   multi: [MultiRequest, unknown[]];
   jitenTargetedReviewWriteV1: [TargetedReviewWriteRequest, TargetedReviewWriteResponse];
 };

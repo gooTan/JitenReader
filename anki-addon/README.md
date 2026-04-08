@@ -93,6 +93,7 @@ Failure:
 - `jiten_targeted_review/contract.py`: request validation and response helpers
 - `jiten_targeted_review/runtime.py`: runtime adapter for Anki collection/scheduler
 - `tests/test_service.py`: isolated unit tests for core behavior
+- `tests/test_runtime.py`: runtime adapter compatibility tests
 
 ## Integration note
 
@@ -100,6 +101,8 @@ This component exposes a pure Python handler:
 
 - action name: `jitenTargetedReviewWriteV1`
 - handler: `jiten_targeted_review.entrypoint.handle_targeted_review_write`
+- compatibility action: `getCollectionCreationTime`
+- compatibility handler: `jiten_targeted_review.entrypoint.handle_get_collection_creation_time`
 
 AnkiConnect (or another local bridge) should route the custom action payload to this handler.
 
@@ -109,4 +112,5 @@ Run:
 
 ```bash
 python -m unittest anki-addon/tests/test_service.py
+python -m unittest anki-addon/tests/test_runtime.py
 ```

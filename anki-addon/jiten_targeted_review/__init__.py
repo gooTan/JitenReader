@@ -12,7 +12,13 @@ except ModuleNotFoundError:  # pragma: no cover - unit tests run without Anki ru
     gui_hooks = None
     QTimer = None
 
-from .entrypoint import ACTION_NAME, handle_targeted_review_write, register_action
+from .entrypoint import (
+    ACTION_NAME,
+    COLLECTION_CREATION_TIME_ACTION_NAME,
+    handle_get_collection_creation_time,
+    handle_targeted_review_write,
+    register_action,
+)
 
 REQUEST_HANDLER_PATCH_FLAG = '_jiten_targeted_review_handler_patched'
 
@@ -45,30 +51,38 @@ def _register_action_with_anki_connect() -> bool:
     anki_connect_cls = getattr(module, 'AnkiConnect')
     util = getattr(module, 'util')
 
-    if hasattr(anki_connect_cls, ACTION_NAME):
-        return True
+    if not hasattr(anki_connect_cls, ACTION_NAME):
+        def targeted_review_write_v1(
+            self: Any,
+            version: int = 1,
+            cardId: int | None = None,
+            rating: str | None = None,
+            requestId: str | None = None,
+            **_kwargs: Any,
+        ) -> dict[str, Any]:
+            payload: dict[str, Any] = {
+                'version': version,
+                'cardId': cardId,
+                'rating': rating,
+            }
 
-    def targeted_review_write_v1(
-        self: Any,
-        version: int = 1,
-        cardId: int | None = None,
-        rating: str | None = None,
-        requestId: str | None = None,
-        **_kwargs: Any,
-    ) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            'version': version,
-            'cardId': cardId,
-            'rating': rating,
-        }
+            if requestId is not None:
+                payload['requestId'] = requestId
 
-        if requestId is not None:
-            payload['requestId'] = requestId
+            return handle_targeted_review_write(payload)
 
-        return handle_targeted_review_write(payload)
+        targeted_review_write_v1.__name__ = ACTION_NAME
+        setattr(anki_connect_cls, ACTION_NAME, util.api()(targeted_review_write_v1))
 
-    targeted_review_write_v1.__name__ = ACTION_NAME
-    setattr(anki_connect_cls, ACTION_NAME, util.api()(targeted_review_write_v1))
+    if not hasattr(anki_connect_cls, COLLECTION_CREATION_TIME_ACTION_NAME):
+        def get_collection_creation_time_v1(
+            self: Any,
+            **_kwargs: Any,
+        ) -> int:
+            return handle_get_collection_creation_time()
+
+        get_collection_creation_time_v1.__name__ = COLLECTION_CREATION_TIME_ACTION_NAME
+        setattr(anki_connect_cls, COLLECTION_CREATION_TIME_ACTION_NAME, util.api()(get_collection_creation_time_v1))
 
     return True
 

@@ -4,6 +4,7 @@ import { findNotes } from '@shared/anki/find-notes';
 import { findNotesMany } from '@shared/anki/find-notes-many';
 import { getApiVersion } from '@shared/anki/get-api-version';
 import { getCollectionCreationTime } from '@shared/anki/get-collection-creation-time';
+import { getIntervals } from '@shared/anki/get-intervals';
 import { notesInfo } from '@shared/anki/notes-info';
 import { targetedReviewWrite } from '@shared/anki/targeted-review-write';
 import { DiscoverWordConfiguration } from '@shared/anki/types';
@@ -42,7 +43,9 @@ const ANKI_QUEUE_LEARNING = 1;
 const ANKI_QUEUE_REVIEW = 2;
 const ANKI_QUEUE_RELEARNING = 3;
 const ANKI_QUEUE_PREVIEW = 4;
+const ANKI_QUEUE_NEW = 0;
 const ANKI_FALLBACK_ROLLOVER_HOUR = 4;
+const ANKI_MATURE_INTERVAL_DAYS = 21;
 const ROLLOVER_CACHE_TTL_MS = 30_000;
 const COLLECTION_CREATION_CACHE_TTL_MS = 300_000;
 const ELIGIBLE_TEMPLATE_ORDS = new Set<number>([0]);
@@ -95,6 +98,11 @@ type ReadCardsResult = {
   cardsById: Map<number, AnkiCardInfo>;
 };
 
+type ReadIntervalsResult = {
+  intervalsByCardId: Map<number, number>;
+  issuedIntervalRequests: number;
+};
+
 type ReadNotesResult = {
   issuedNotesInfoRequests: number;
   notesById: Map<number, AnkiNoteInfo>;
@@ -103,6 +111,7 @@ type ReadNotesResult = {
 export type AnkiParseLookupMetrics = {
   cardsInfoRequests: number;
   findNotesRequests: number;
+  intervalRequests: number;
   notesInfoRequests: number;
   totalTerms: number;
   uniqueCardIds: number;
@@ -123,6 +132,7 @@ export class AnkiReviewBackend implements ReviewBackend {
   private readonly _findNotesCache = new Map<string, CacheEntry<number[]>>();
   private readonly _notesInfoCache = new Map<number, CacheEntry<AnkiNoteInfo>>();
   private readonly _cardsInfoCache = new Map<number, CacheEntry<AnkiCardInfo>>();
+  private readonly _intervalsCache = new Map<number, CacheEntry<number>>();
 
   public getCapabilities(): ReviewBackendCapabilities {
     return ANKI_REVIEW_BACKEND_CAPABILITIES;
@@ -139,6 +149,7 @@ export class AnkiReviewBackend implements ReviewBackend {
     this._findNotesCache.clear();
     this._notesInfoCache.clear();
     this._cardsInfoCache.clear();
+    this._intervalsCache.clear();
   }
 
   public async getParseReviewStates(
@@ -175,6 +186,8 @@ export class AnkiReviewBackend implements ReviewBackend {
       this.getUniqueIds(Array.from(notesById.values(), (note) => note.cards)),
     );
     const cardsById = cardsLookupResult.cardsById;
+    const intervalsLookupResult = await this.readIntervalsIndexed(Array.from(cardsById.keys()));
+    const intervalsByCardId = intervalsLookupResult.intervalsByCardId;
 
     const resolutionsByTerm = new Map<string, ReviewTermResolution>();
 
@@ -185,6 +198,7 @@ export class AnkiReviewBackend implements ReviewBackend {
         planLookupResult.noteIdsByPlanKey,
         notesById,
         cardsById,
+        intervalsByCardId,
         eligibleTargets,
       );
 
@@ -194,6 +208,7 @@ export class AnkiReviewBackend implements ReviewBackend {
     this._lastParseMetrics = {
       cardsInfoRequests: cardsLookupResult.issuedCardsInfoRequests,
       findNotesRequests: planLookupResult.issuedFindNotesRequests,
+      intervalRequests: intervalsLookupResult.issuedIntervalRequests,
       notesInfoRequests: notesLookupResult.issuedNotesInfoRequests,
       totalTerms: termContexts.size,
       uniqueCardIds: cardsById.size,
@@ -231,9 +246,7 @@ export class AnkiReviewBackend implements ReviewBackend {
       return [];
     }
 
-    const due = this.isCardDue(targetCard);
-
-    return due ? [JitenCardState.DUE, JitenCardState.YOUNG] : [JitenCardState.YOUNG];
+    return this.getStateTagsForCard(targetCard);
   }
 
   public async gradeCard(
@@ -704,12 +717,73 @@ export class AnkiReviewBackend implements ReviewBackend {
     };
   }
 
+  private async readIntervalsIndexed(cardIds: number[]): Promise<ReadIntervalsResult> {
+    const now = Date.now();
+    const indexed = new Map<number, number>();
+    const missing = [];
+
+    for (const cardId of cardIds) {
+      const cached = this._intervalsCache.get(cardId);
+
+      if (cached && cached.expiresAt > now) {
+        indexed.set(cardId, cached.value);
+      } else {
+        missing.push(cardId);
+      }
+    }
+
+    if (missing.length === 0) {
+      return {
+        intervalsByCardId: indexed,
+        issuedIntervalRequests: 0,
+      };
+    }
+
+    const chunks = this.chunkIds(missing);
+    const chunkResults = await this.runTasksWithConcurrency(
+      chunks.map(
+        (chunk): (() => Promise<number[]>) =>
+          () =>
+            getIntervals(chunk, { showToastOnError: false }),
+      ),
+      CARDS_INFO_CONCURRENCY_LIMIT,
+    );
+
+    for (const [chunkIndex, intervals] of chunkResults.entries()) {
+      if (!intervals) {
+        continue;
+      }
+
+      const requestedCards = chunks[chunkIndex];
+
+      for (const [intervalIndex, rawInterval] of intervals.entries()) {
+        const cardId = requestedCards[intervalIndex];
+
+        if (typeof cardId !== 'number' || !Number.isFinite(rawInterval)) {
+          continue;
+        }
+
+        indexed.set(cardId, rawInterval);
+        this._intervalsCache.set(cardId, {
+          expiresAt: now + LOOKUP_CACHE_TTL_MS,
+          value: rawInterval,
+        });
+      }
+    }
+
+    return {
+      intervalsByCardId: indexed,
+      issuedIntervalRequests: chunks.length,
+    };
+  }
+
   private resolveTermFromIndexes(
     termContext: TermContext,
     lookupConfigs: LookupConfig[],
     noteIdsByPlanKey: Map<string, number[]>,
     notesById: Map<number, AnkiNoteInfo>,
     cardsById: Map<number, AnkiCardInfo>,
+    intervalsByCardId: Map<number, number>,
     eligibleTargets: EligibleAnkiTargets,
   ): ReviewTermResolution {
     const candidates: AnkiTargetCandidate[] = [];
@@ -762,6 +836,7 @@ export class AnkiReviewBackend implements ReviewBackend {
           }
 
           const due = this.isCardDue(card);
+          const stateTags = this.getStateTags(card.queue, due, intervalsByCardId.get(card.cardId));
           const candidate: AnkiTargetCandidate = {
             target: {
               key: `anki:${card.cardId}`,
@@ -773,7 +848,7 @@ export class AnkiReviewBackend implements ReviewBackend {
               ankiModel: card.modelName,
               ankiTemplateOrd: card.ord,
             },
-            stateTags: due ? [JitenCardState.DUE, JitenCardState.YOUNG] : [JitenCardState.YOUNG],
+            stateTags,
             dueState: due ? 'due' : 'notDue',
           };
 
@@ -793,9 +868,14 @@ export class AnkiReviewBackend implements ReviewBackend {
 
     if (candidates.length > 1) {
       const hasDueCandidate = candidates.some((candidate) => candidate.dueState === 'due');
+      const mergedStateTags = this.mergeAmbiguousStateTags(candidates);
+
+      if (hasDueCandidate && !mergedStateTags.includes(JitenCardState.DUE)) {
+        mergedStateTags.unshift(JitenCardState.DUE);
+      }
 
       return {
-        stateTags: hasDueCandidate ? [JitenCardState.DUE] : [JitenCardState.YOUNG],
+        stateTags: mergedStateTags,
         mappingState: 'ambiguous',
         dueState: hasDueCandidate ? 'due' : 'notDue',
         targetState: 'ambiguous',
@@ -910,6 +990,75 @@ export class AnkiReviewBackend implements ReviewBackend {
       .replace(/[\[\]]/g, '');
 
     return this.katakanaToHiragana(this.normaliseTextValue(flattened));
+  }
+
+  private async getStateTagsForCard(
+    card: Pick<AnkiCardInfo, 'cardId' | 'queue' | 'due'>,
+  ): Promise<JitenCardState[]> {
+    const due = this.isCardDue(card);
+    const intervalsLookup = await this.readIntervalsIndexed([card.cardId]);
+
+    return this.getStateTags(card.queue, due, intervalsLookup.intervalsByCardId.get(card.cardId));
+  }
+
+  private getStateTags(queue: number, due: boolean, intervalDays?: number): JitenCardState[] {
+    const stateTags: JitenCardState[] = [];
+    const schedulingState = this.getSchedulingState(queue, intervalDays);
+
+    if (due) {
+      stateTags.push(JitenCardState.DUE);
+    }
+
+    if (schedulingState) {
+      stateTags.push(schedulingState);
+    }
+
+    return stateTags;
+  }
+
+  private getSchedulingState(queue: number, intervalDays?: number): JitenCardState | undefined {
+    if (queue === ANKI_QUEUE_NEW) {
+      return JitenCardState.NEW;
+    }
+
+    if (typeof intervalDays !== 'number' || !Number.isFinite(intervalDays)) {
+      return;
+    }
+
+    return intervalDays >= ANKI_MATURE_INTERVAL_DAYS ? JitenCardState.MATURE : JitenCardState.YOUNG;
+  }
+
+  private mergeAmbiguousStateTags(candidates: AnkiTargetCandidate[]): JitenCardState[] {
+    const hasDueCandidate = candidates.some((candidate) => candidate.dueState === 'due');
+    const maturityStates = new Set<JitenCardState>();
+
+    for (const candidate of candidates) {
+      if (candidate.stateTags.includes(JitenCardState.NEW)) {
+        maturityStates.add(JitenCardState.NEW);
+      }
+
+      if (candidate.stateTags.includes(JitenCardState.MATURE)) {
+        maturityStates.add(JitenCardState.MATURE);
+      }
+
+      if (candidate.stateTags.includes(JitenCardState.YOUNG)) {
+        maturityStates.add(JitenCardState.YOUNG);
+      }
+    }
+
+    const stateTags: JitenCardState[] = [];
+
+    if (hasDueCandidate) {
+      stateTags.push(JitenCardState.DUE);
+    }
+
+    if (maturityStates.size === 1) {
+      const [maturityState] = Array.from(maturityStates);
+
+      stateTags.push(maturityState);
+    }
+
+    return stateTags;
   }
 
   private katakanaToHiragana(value: string): string {
@@ -1027,7 +1176,7 @@ export class AnkiReviewBackend implements ReviewBackend {
 
   private createUnmappedResolution(): ReviewTermResolution {
     return {
-      stateTags: [],
+      stateTags: [JitenCardState.NEW],
       mappingState: 'unmapped',
       dueState: 'unknown',
       targetState: 'none',
