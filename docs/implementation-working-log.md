@@ -3761,3 +3761,62 @@ pm run build passes.
 - Risks/assumptions carried in:
   - Assumption: the safest fix is to make the preview helper read/write current preview state explicitly rather than partially inlining old preview logic back into the host element.
   - Low risk because the change is isolated to preview-toggle behaviour.
+
+### 2026-04-09 - Start-of-Run (Text Highlighter Refactor: Split `text-highlighter.ts`)
+- Stage:
+  - Stage 10 - Complete Anki Read-Side Identity.
+- Run intent:
+  - Refactor `src/apps/text-highlighter/text-highlighter.ts` into smaller helper modules while preserving the existing token/fragment pipeline and DOM patching behaviour.
+- Current implementation state:
+  - Stage 10 state-surfacing work is stable and the recent popup/settings/word-style refactors are already landed.
+  - `text-highlighter.ts` currently mixes map-building, fragment splitting/correction, ruby handling, misparse handling, DOM patching, Registry side effects, and chunk scheduling in one large class.
+- Exact goal of this run:
+  - Keep `TextHighlighter` as the exported coordinator but extract:
+    - shared mutable state/types
+    - map helpers
+    - fragment rewriting helpers
+    - DOM/ruby/patch strategy helpers
+    - chunking/yield orchestration helpers
+  - Preserve current pipeline order, chunk size, and external `BaseTextHighlighter` contract.
+- Blockers or prerequisites already recorded:
+  - No blocker.
+  - This should remain a structural refactor only; no highlighting policy changes.
+- Risks/assumptions carried in:
+  - Assumption: the safest extraction strategy is to keep one shared mutable state object and pass narrow helper dependencies into the new modules rather than cloning token/fragment maps.
+  - Main risk is changing the order or ownership of fragment/token dismissal and DOM patching; mitigation is to preserve the existing preprocess/apply sequencing exactly.
+
+### 2026-04-09 - Completed (Text Highlighter Refactor First Wave: Split `text-highlighter.ts`)
+- Completed work:
+  - Reduced `src/apps/text-highlighter/text-highlighter.ts` to a slimmer pipeline coordinator that now owns the shared mutable state, preprocess/apply ordering, and the operation-specific chunked wrappers.
+  - Extracted internal shared state and helper contracts into `src/apps/text-highlighter/text-highlighter.internal-types.ts`.
+  - Extracted token/fragment map building and relation helpers into `src/apps/text-highlighter/text-highlighter-maps.ts`.
+  - Extracted fragment splitting/correction helpers into `src/apps/text-highlighter/text-highlighter-fragment-rewriter.ts`.
+  - Extracted DOM patching, wrapping, dismissal, and misparse-marking helpers into `src/apps/text-highlighter/text-highlighter-dom-ops.ts`.
+  - Extracted ruby-specific helpers and shared-ruby splitting into `src/apps/text-highlighter/text-highlighter-ruby.ts`.
+  - Extracted patch strategy helpers into `src/apps/text-highlighter/text-highlighter-patch-strategies.ts`.
+  - Extracted chunk/yield helpers into `src/apps/text-highlighter/text-highlighter-scheduler.ts`.
+- Files changed:
+  - `src/apps/text-highlighter/text-highlighter.ts`
+  - `src/apps/text-highlighter/text-highlighter.internal-types.ts`
+  - `src/apps/text-highlighter/text-highlighter-maps.ts`
+  - `src/apps/text-highlighter/text-highlighter-fragment-rewriter.ts`
+  - `src/apps/text-highlighter/text-highlighter-dom-ops.ts`
+  - `src/apps/text-highlighter/text-highlighter-ruby.ts`
+  - `src/apps/text-highlighter/text-highlighter-patch-strategies.ts`
+  - `src/apps/text-highlighter/text-highlighter-scheduler.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Kept one shared mutable state object for fragments/tokens/maps so extracted helpers can operate without cloning the working pipeline state.
+  - Preserved the existing preprocess/apply order exactly, including the rebuild-and-second-split flow and the targeted `requestAnimationFrame` yielding cadence.
+  - Kept the operation-specific chunked wrappers in the coordinator for now because they still encode some subtle behavior around fragment/token reassociation; the heavier domain logic moved out first.
+- Blockers / open issues:
+  - No active blocker.
+  - This is a first-wave refactor rather than the absolute end-state: some chunk-specific orchestration still lives in `text-highlighter.ts`.
+  - Manual parse/highlighting verification is still recommended for ruby-heavy pages, fragmented ruby content, and large-page chunking responsiveness.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Audit the refactor for behavioral parity, especially around fragmented ruby handling, misparse marking, and chunked large-page performance.
+- Handoff:
+  - `text-highlighter.ts` now delegates map, fragment, DOM, ruby, patch-strategy, and scheduler concerns to focused helpers; the next safe slice is reviewing whether any remaining chunked wrappers can be simplified further without changing behavior.
