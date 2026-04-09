@@ -3,11 +3,10 @@ import { createElement } from '@shared/dom/create-element';
 import { findElements } from '@shared/dom/find-elements';
 import { withElement } from '@shared/dom/with-element';
 import { getStyleUrl } from '@shared/extension/get-style-url';
-import { JitenCard, JitenCardState } from '@shared/jiten/types';
+import { JitenCard } from '@shared/jiten/types';
 import { ForgetCardCommand } from '@shared/messages/background/forget-card.command';
 import { UpdateCardStateCommand } from '@shared/messages/background/update-card-state.command';
 import { onBroadcastMessage } from '@shared/messages/receiving/on-broadcast-message';
-import { cleanReading, getPitchDiagramData } from '@shared/pitch-accent-utils';
 import { getThemeCssVars } from '@shared/theme/get-theme-css-vars';
 import { KeybindManager } from '../integration/keybind-manager';
 import { Registry } from '../integration/registry';
@@ -15,7 +14,14 @@ import { GradingController } from './actions/grading-controller';
 import { MiningController } from './actions/mining-controller';
 import { RotationController } from './actions/rotation-controller';
 import { ConfirmDialog } from './confirm-dialog';
-import { PARTS_OF_SPEECH } from './part-of-speech';
+import { PopupLifecycleController } from './popup-lifecycle-controller';
+import { setPopupPosition } from './popup-positioning';
+import {
+  cardHasState,
+  getReviewStateTags,
+  renderPopupContext,
+  renderPopupDetails,
+} from './popup-renderer';
 
 export class Popup {
   private _keyManager = new KeybindManager([], {
@@ -104,11 +110,16 @@ export class Popup {
   private _showPitchDiagrams: boolean;
   private _disableHeadWordLink: boolean;
 
-  private _hideTimer?: NodeJS.Timeout;
-  private _isHover?: boolean;
   private _confirmDialog?: ConfirmDialog;
   private _popupLeft = 0;
   private _popupTop = 0;
+  private _lifecycle = new PopupLifecycleController({
+    confirmDialogOpen: (): boolean => this._confirmDialog?.isOpen ?? false,
+    hide: (): void => this.hide(),
+    hidePopupAutomatically: (): boolean => this._hidePopupAutomatically,
+    hidePopupDelay: (): number => this._hidePopupDelay,
+    isVisible: (): boolean => this.isVisibile(),
+  });
 
   private _cardContext?: HTMLElement;
   private _conjugations?: string[];
@@ -152,7 +163,7 @@ export class Popup {
     this._sentence = sentence;
     this._conjugations = Registry.getConjugations(context);
 
-    this.clearTimer();
+    this._lifecycle.clearTimer();
     this.updateParentElement();
     this.rerender();
     this.setPosition();
@@ -177,17 +188,7 @@ export class Popup {
   }
 
   public initHide(): void {
-    if (!this._hidePopupAutomatically) {
-      return;
-    }
-
-    if (!this._hidePopupDelay) {
-      this.hide();
-
-      return;
-    }
-
-    this.startTimer();
+    this._lifecycle.initHide();
   }
 
   public disablePointerEvents(): void {
@@ -325,124 +326,15 @@ export class Popup {
   //#region Position the popup
 
   private setPosition(): void {
-    const clamp = (value: number, min: number, max: number): number =>
-      Math.min(Math.max(value, min), max);
+    const { left, top } = setPopupPosition({
+      cardContext: this._cardContext!,
+      leftAlignPopupToWord: this._leftAlignPopupToWord,
+      popup: this._popup,
+      root: this._root,
+    });
 
-    const { writingMode } = getComputedStyle(this._cardContext!);
-    const { x, y } = this._cardContext!.getBoundingClientRect();
-    const { offsetWidth: popupWidth, offsetHeight: popupHeight } = this._popup;
-    const { innerWidth, innerHeight, scrollX, scrollY } = window;
-    const { top, right, bottom, left } = this.getClosestClientRect(this._cardContext!, x, y);
-
-    const wordLeft = scrollX + left;
-    const wordTop = scrollY + top;
-    const wordRight = scrollX + right;
-    const wordBottom = scrollY + bottom;
-
-    const leftSpace = left;
-    const topSpace = top;
-    const rightSpace = innerWidth - right;
-    const bottomSpace = innerHeight - bottom;
-
-    const minLeft = scrollX;
-    const maxLeft = scrollX + innerWidth - popupWidth;
-    const minTop = scrollY;
-    const maxTop = scrollY + innerHeight - popupHeight;
-
-    let popupLeft: number;
-    let popupTop: number;
-
-    if (writingMode.startsWith('horizontal')) {
-      popupTop = clamp(bottomSpace > topSpace ? wordBottom : wordTop - popupHeight, minTop, maxTop);
-      popupLeft = clamp(
-        rightSpace > leftSpace ? wordLeft : wordRight - popupWidth,
-        minLeft,
-        maxLeft,
-      );
-    } else {
-      popupTop = clamp(bottomSpace > topSpace ? wordTop : wordBottom - popupHeight, minTop, maxTop);
-      popupLeft = clamp(
-        rightSpace > leftSpace ? wordRight : wordLeft - popupWidth,
-        minLeft,
-        maxLeft,
-      );
-    }
-
-    if (this._leftAlignPopupToWord) {
-      // Align the popup to the left of the word
-      // Ensure the popup does not overflow the right edge of the screen, also add a bit of padding
-      popupLeft = Math.min(wordLeft, innerWidth - popupWidth - 8);
-    }
-
-    if (innerWidth < 450) {
-      popupLeft = 8;
-
-      // we subtract 32px to account for the left and right padding
-      this._root.style.width = `${innerWidth - 32}px`;
-      this._popup.style.width = `${innerWidth - 32}px`;
-    }
-
-    this._popupLeft = popupLeft;
-    this._popupTop = popupTop;
-    this._root.style.transform = `translate(${popupLeft}px, ${popupTop}px)`;
-  }
-
-  private getClosestClientRect(elem: HTMLElement, x: number, y: number): DOMRect {
-    const rects = elem.getClientRects();
-
-    if (rects.length === 1) {
-      return rects[0];
-    }
-
-    // Merge client rects that are adjacent
-    // This works around a Chrome issue, where sometimes, non-deterministically,
-    // inline child elements will get separate client rects, even if they are on the same line.
-    const { writingMode } = getComputedStyle(elem);
-    const horizontal = writingMode.startsWith('horizontal');
-    const mergedRects = [];
-
-    for (const rect of rects) {
-      if (mergedRects.length === 0) {
-        mergedRects.push(rect);
-
-        continue;
-      }
-
-      const prevRect: DOMRect = mergedRects[mergedRects.length - 1];
-
-      if (horizontal) {
-        if (rect.bottom === prevRect.bottom && rect.left === prevRect.right) {
-          mergedRects[mergedRects.length - 1] = new DOMRect(
-            prevRect.x,
-            prevRect.y,
-            rect.right - prevRect.left,
-            prevRect.height,
-          );
-        } else {
-          mergedRects.push(rect);
-        }
-      } else {
-        if (rect.right === prevRect.right && rect.top === prevRect.bottom) {
-          mergedRects[mergedRects.length - 1] = new DOMRect(
-            prevRect.x,
-            prevRect.y,
-            prevRect.width,
-            rect.bottom - prevRect.top,
-          );
-        } else {
-          mergedRects.push(rect);
-        }
-      }
-    }
-
-    return mergedRects
-      .map((rect) => ({
-        rect,
-        distance:
-          Math.max(rect.left - x, 0, x - rect.right) ** 2 +
-          Math.max(rect.top - y, 0, y - rect.bottom) ** 2,
-      }))
-      .reduce((a, b) => (a.distance <= b.distance ? a : b)).rect;
+    this._popupLeft = left;
+    this._popupTop = top;
   }
 
   //#endregion
@@ -455,7 +347,7 @@ export class Popup {
       sentence?: string,
     ): void => this._mining.addOrRemove(action, key, this._card!, sentence);
     const performFlaggedDeckAction = (key: 'neverForget' | 'blacklist' | 'suspend'): void => {
-      const action = this.cardHasState(key, this._card!) ? 'remove' : 'add';
+      const action = cardHasState(key, this._card!) ? 'remove' : 'add';
 
       performDeckAction(action, key);
     };
@@ -582,23 +474,6 @@ export class Popup {
   }
 
   //#endregion
-  //#region Card Utils
-
-  private cardHasState(state: 'neverForget' | 'blacklist' | 'suspend', card: JitenCard): boolean {
-    const stateMap: Record<'neverForget' | 'blacklist' | 'suspend', JitenCardState> = {
-      neverForget: JitenCardState.MASTERED,
-      blacklist: JitenCardState.BLACKLISTED,
-      suspend: JitenCardState.BLACKLISTED,
-    };
-
-    return this.getReviewStateTags(card).includes(stateMap[state]);
-  }
-
-  private getReviewStateTags(card: JitenCard): JitenCardState[] {
-    return card.reviewMetadata?.stateTags ?? card.cardState;
-  }
-
-  //#endregion
   //#region On showing a popup
 
   private rerender(): void {
@@ -611,13 +486,13 @@ export class Popup {
     this.adjustContext(this._card);
     this.adjustDetails(this._card);
 
-    this._popup.setAttribute('class', `popup ${this.getReviewStateTags(this._card).join(' ')}`);
+    this._popup.setAttribute('class', `popup ${getReviewStateTags(this._card).join(' ')}`);
   }
 
   private adjustMiningButtons(card: JitenCard): void {
-    const isNF = this.cardHasState('neverForget', card);
-    const isBL = this.cardHasState('blacklist', card);
-    const isSP = this.cardHasState('suspend', card);
+    const isNF = cardHasState('neverForget', card);
+    const isBL = cardHasState('blacklist', card);
+    const isSP = cardHasState('suspend', card);
 
     withElement(this._mineButtons, '#never-forget-deck', (el) => {
       el.innerText = isNF ? 'Remove Never Forget' : 'Never forget';
@@ -676,330 +551,22 @@ export class Popup {
 
   private adjustContext(card: JitenCard): void {
     this._context.replaceChildren(
-      createElement('div', {
-        id: 'header',
-        class: 'subsection',
-        children: [this.getReadingBlock(card), this.getCardStateBlock(card)],
-      }),
-      createElement('div', {
-        id: 'meta',
-        class: 'subsection',
-        children: [
-          this.getPitchAccentBlock(card),
-          this.getFrequencyBlock(card),
-          this.getBackendStatusBlock(card),
-        ],
+      ...renderPopupContext({
+        card,
+        disableHeadWordLink: this._disableHeadWordLink,
+        showPitchDiagrams: this._showPitchDiagrams,
       }),
     );
-  }
-
-  private getReadingBlock(card: JitenCard): HTMLElement {
-    const { wordId, spelling, readingIndex, wordWithReading } = card;
-    const nodes = this.convertToRubyNodes(wordWithReading ?? spelling);
-
-    if (this._disableHeadWordLink) {
-      const span = createElement('span', {
-        id: 'link',
-        attributes: { lang: 'ja' },
-      });
-
-      span.append(...nodes);
-
-      return span;
-    }
-
-    const url = `https://jiten.moe/vocabulary/${wordId}/${readingIndex}`;
-
-    const a = createElement('a', {
-      id: 'link',
-      attributes: { href: url, target: '_blank', lang: 'ja' },
-    });
-
-    a.append(...nodes);
-
-    return a;
-  }
-
-  private convertToRubyNodes(wordWithReading: string): Node[] {
-    // If no brackets, return as a single text node
-    if (!wordWithReading.includes('[')) {
-      return [document.createTextNode(wordWithReading)];
-    }
-
-    // Regex to match kanji[reading] patterns
-    const regex = /([^\u3040-\u309F\u30A0-\u30FF]+)\[(.+?)\]/g;
-    const nodes: Node[] = [];
-    let lastIndex = 0;
-    let match: RegExpExecArray | null;
-
-    while ((match = regex.exec(wordWithReading)) !== null) {
-      // Add text before the match
-      if (match.index > lastIndex) {
-        nodes.push(document.createTextNode(wordWithReading.slice(lastIndex, match.index)));
-      }
-
-      // Create ruby element
-      const ruby = document.createElement('ruby');
-
-      const rt = document.createElement('rt');
-
-      rt.textContent = match[2];
-
-      ruby.append(document.createTextNode(match[1]));
-      ruby.append(rt);
-
-      nodes.push(ruby);
-
-      lastIndex = regex.lastIndex;
-    }
-
-    // Add any remaining text after the last match
-    if (lastIndex < wordWithReading.length) {
-      nodes.push(document.createTextNode(wordWithReading.slice(lastIndex)));
-    }
-
-    return nodes;
-  }
-
-  private getCardStateBlock(card: JitenCard): HTMLDivElement {
-    const cardState = this.getReviewStateTags(card);
-
-    return createElement('div', {
-      id: 'state',
-      children: cardState.map((s) => createElement('span', { class: [s], innerText: s })),
-    });
-  }
-
-  private getPitchAccentBlock(card: JitenCard): HTMLDivElement {
-    const container = createElement('div', { id: 'pitch-accent' });
-
-    if (!this._showPitchDiagrams) {
-      return container;
-    }
-
-    const kana = cleanReading(card.reading);
-
-    for (const pitch of card.pitchAccents) {
-      const svg = this.renderPitchDiagram(kana, pitch);
-
-      if (svg) {
-        container.appendChild(svg);
-      }
-    }
-
-    return container;
-  }
-
-  private renderPitchDiagram(reading: string, pitchNum: number): SVGSVGElement | null {
-    const data = getPitchDiagramData(reading, pitchNum);
-
-    if (!data) {
-      return null;
-    }
-
-    const { morae, pattern, color } = data;
-    const ns = 'http://www.w3.org/2000/svg';
-    const pointCount = pattern.length;
-    const stepX = 18;
-    const padX = 9;
-    const width = pointCount * stepX;
-    const height = 38;
-    const highY = 5;
-    const lowY = 17;
-    const radius = 3;
-    const textOffset = 8;
-
-    const svg = document.createElementNS(ns, 'svg');
-
-    svg.setAttribute('width', String(width));
-    svg.setAttribute('height', String(height));
-    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-
-    const points = pattern.map((v, i) => ({
-      x: padX + i * stepX,
-      y: v === 1 ? highY : lowY,
-    }));
-
-    const polyline = document.createElementNS(ns, 'polyline');
-
-    polyline.setAttribute('points', points.map((p) => `${p.x},${p.y}`).join(' '));
-    polyline.setAttribute('fill', 'none');
-    polyline.setAttribute('stroke', color);
-    polyline.setAttribute('stroke-width', '1.5');
-    svg.appendChild(polyline);
-
-    for (let i = 0; i < pointCount; i++) {
-      const isParticle = i === pointCount - 1;
-      const circle = document.createElementNS(ns, 'circle');
-
-      circle.setAttribute('cx', String(points[i].x));
-      circle.setAttribute('cy', String(points[i].y));
-      circle.setAttribute('r', String(radius));
-      circle.setAttribute('fill', isParticle ? '#fff' : color);
-      circle.setAttribute('stroke', color);
-      circle.setAttribute('stroke-width', '1.5');
-      svg.appendChild(circle);
-
-      if (!isParticle && morae[i]) {
-        const text = document.createElementNS(ns, 'text');
-
-        text.setAttribute('x', String(points[i].x));
-        text.setAttribute('y', String(points[i].y + textOffset));
-        text.setAttribute('text-anchor', 'middle');
-        text.setAttribute('dominant-baseline', 'hanging');
-        text.setAttribute('fill', color);
-        text.setAttribute('font-size', '9');
-        text.setAttribute('font-weight', 'bold');
-        text.setAttribute('font-family', "'Noto Sans JP', sans-serif");
-        text.textContent = morae[i];
-        svg.appendChild(text);
-      }
-    }
-
-    return svg;
-  }
-
-  private getFrequencyBlock(card: JitenCard): HTMLDivElement {
-    const { frequencyRank } = card;
-
-    return createElement('div', {
-      id: 'frequency',
-      innerText: `#${frequencyRank}`,
-    });
-  }
-
-  private getBackendStatusBlock(card: JitenCard): HTMLDivElement {
-    const { backend, freshness, dueState, resolutionStatus, mappingOutcome, stateTags } =
-      card.reviewMetadata;
-    const backendLabel = backend === 'anki' ? 'Anki' : 'Jiten';
-
-    let statusLabel = freshness === 'stale' ? 'refreshing' : 'synced';
-
-    if (resolutionStatus === 'backend-unavailable') {
-      statusLabel = 'backend unavailable';
-    } else if (resolutionStatus === 'config-insufficient') {
-      statusLabel = 'config insufficient';
-    } else if (mappingOutcome === 'ambiguous') {
-      statusLabel = 'ambiguous target';
-    } else if (mappingOutcome === 'none' && backend === 'anki') {
-      statusLabel = 'no target';
-    } else if (stateTags.includes(JitenCardState.SUSPENDED)) {
-      statusLabel = 'suspended';
-    } else if (stateTags.includes(JitenCardState.BURIED)) {
-      statusLabel = 'buried';
-    } else if (dueState === 'unavailable') {
-      statusLabel = 'backend unavailable';
-    }
-
-    return createElement('div', {
-      id: 'backend-status',
-      children: [
-        createElement('span', {
-          class: ['backend', backend],
-          innerText: backendLabel,
-        }),
-        createElement('span', {
-          class: ['review-status', freshness === 'fresh' ? 'fresh' : 'stale'],
-          innerText: statusLabel,
-        }),
-      ],
-    });
-  }
-
-  private getConjugationsBlock(conjugations: string[]): HTMLDivElement | null {
-    if (!conjugations || conjugations.length === 0) {
-      return null;
-    }
-
-    return createElement('div', {
-      id: 'conjugations',
-      children: [
-        createElement('span', {
-          class: 'label',
-          innerText: 'Conjugations: ',
-        }),
-        createElement('span', {
-          innerText: conjugations.join(' ; '),
-        }),
-      ],
-    });
   }
 
   private adjustDetails(card: JitenCard): void {
-    const groupedMeanings = this.getGroupedMeanings(card);
-    const conjugationsBlock =
-      this._conjugations && this._showConjugations
-        ? this.getConjugationsBlock(this._conjugations)
-        : null;
-
-    const children = [];
-
-    if (conjugationsBlock) {
-      children.push(conjugationsBlock);
-    }
-
-    children.push(
-      ...groupedMeanings.flatMap(({ partsOfSpeech, glosses, startIndex }) => [
-        createElement('div', {
-          class: 'pos',
-          children: partsOfSpeech
-            .map((pos) => PARTS_OF_SPEECH[pos] ?? 'Unknown')
-            .filter(Boolean)
-            .map((pos) => createElement('span', { innerText: pos })),
-        }),
-        createElement('ol', {
-          attributes: {
-            start: (startIndex + 1).toString(),
-          },
-          children: glosses.map((g) =>
-            createElement('li', {
-              innerText: g.join('; '),
-            }),
-          ),
-        }),
-      ]),
+    this._details.replaceChildren(
+      ...renderPopupDetails({
+        card,
+        conjugations: this._conjugations,
+        showConjugations: this._showConjugations,
+      }),
     );
-
-    this._details.replaceChildren(...children);
-  }
-
-  private getGroupedMeanings(card: JitenCard): {
-    partsOfSpeech: string[];
-    glosses: string[][];
-    startIndex: number;
-  }[] {
-    const { meanings } = card;
-    const groupedMeanings: {
-      partsOfSpeech: string[];
-      glosses: string[][];
-      startIndex: number;
-    }[] = [];
-
-    let lastPos: string[] = [];
-
-    for (const [index, meaning] of meanings.entries()) {
-      const currentPartsOfSpeech = Array.isArray(meaning.partsOfSpeech)
-        ? meaning.partsOfSpeech
-        : [meaning.partsOfSpeech];
-
-      if (
-        currentPartsOfSpeech.length == lastPos.length &&
-        currentPartsOfSpeech.every((p, i) => p === lastPos[i])
-      ) {
-        groupedMeanings[groupedMeanings.length - 1].glosses.push(meaning.glosses);
-
-        continue;
-      }
-      groupedMeanings.push({
-        partsOfSpeech: currentPartsOfSpeech,
-        glosses: [meaning.glosses],
-        startIndex: index,
-      });
-
-      lastPos = meaning.partsOfSpeech;
-    }
-
-    return groupedMeanings;
   }
 
   //#endregion
@@ -1010,36 +577,11 @@ export class Popup {
   }
 
   private startHover(): void {
-    if (!this.isVisibile()) {
-      return;
-    }
-
-    this._isHover = true;
-    this.clearTimer();
+    this._lifecycle.startHover();
   }
 
   private stopHover(): void {
-    this._isHover = false;
-
-    if (!this.isVisibile()) {
-      return;
-    }
-
-    if (this._confirmDialog?.isOpen) {
-      return;
-    }
-
-    if (!this._hidePopupAutomatically) {
-      return;
-    }
-
-    if (!this._hidePopupDelay) {
-      this.hide();
-
-      return;
-    }
-
-    this.startTimer();
+    this._lifecycle.stopHover();
   }
 
   private handleKeydown(e: MouseEvent | KeyboardEvent): void {
@@ -1053,23 +595,11 @@ export class Popup {
       this.hide();
     }
 
-    if ('button' in e && e.button === 0 && this.isVisibile() && !this._isHover) {
+    if ('button' in e && e.button === 0 && this.isVisibile() && !this._lifecycle.isHover) {
       e.stopPropagation();
 
       this.hide();
     }
-  }
-
-  private clearTimer(): void {
-    if (this._hideTimer) {
-      clearTimeout(this._hideTimer);
-    }
-  }
-
-  private startTimer(): void {
-    this.clearTimer();
-
-    this._hideTimer = setTimeout(() => this.hide(), this._hidePopupDelay);
   }
 
   //#endregion

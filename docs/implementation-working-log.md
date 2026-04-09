@@ -3612,3 +3612,81 @@ pm run build passes.
   - Verify with a live Anki profile that `getCardState()` reflects immediate queue/state changes after external edits and after grade submissions.
 - Handoff:
   - The refactor regression is fixed; `getCardState()` now uses a fresh repository read while the parse lookup pipeline remains cache-backed.
+
+### 2026-04-08 - Start-of-Run (Settings Refactor: Split `settings.ts`)
+- Stage:
+  - Stage 10 - Complete Anki Read-Side Identity.
+- Run intent:
+  - Refactor `src/views/settings.ts` into smaller focused modules while preserving current settings-page behavior.
+- Current implementation state:
+  - Stage 10 Anki settings behavior is in place and verified by lint/build.
+  - `settings.ts` currently mixes custom-element registration, theme handling, generic field initialization, visibility bindings, Anki endpoint sync, import/export actions, TOC navigation, and settings search.
+- Exact goal of this run:
+  - Extract the highest-value subsystems out of `settings.ts` first:
+    - navigation and search
+    - Anki settings helpers/sync
+    - theme controller
+  - Keep the current DOM structure, config schema, and save behavior unchanged.
+- Blockers or prerequisites already recorded:
+  - No blocker.
+  - This should remain a structural refactor only; no settings-behavior redesign.
+- Risks/assumptions carried in:
+  - Assumption: a first-pass controller extraction can materially shrink `settings.ts` without needing a full form-state rewrite in one run.
+  - Risk: hidden coupling between search/navigation/binding callbacks; mitigation is to extract narrow initializers with explicit callbacks/dependencies.
+
+### 2026-04-08 - Completed (Settings Refactor First Wave: Split `settings.ts`)
+- Completed work:
+  - Reduced `src/views/settings.ts` from the previous monolithic controller shape to a slimmer page bootstrap focused on custom-element registration, generic field hydration, save wiring, visibility bindings, and import/export actions.
+  - Extracted Anki-specific settings summary/endpoint sync logic into `src/views/settings/settings-anki-controller.ts`.
+  - Extracted TOC navigation and settings search behavior into `src/views/settings/settings-navigation-controller.ts`.
+  - Extracted theme variable and colour-picker handling into `src/views/settings/settings-theme-controller.ts`.
+  - Moved the new controllers into `src/views/settings/` instead of top-level `src/views/` after build verification revealed that top-level view files are auto-discovered as extra bundles.
+- Files changed:
+  - `src/views/settings.ts`
+  - `src/views/settings/settings-anki-controller.ts`
+  - `src/views/settings/settings-navigation-controller.ts`
+  - `src/views/settings/settings-theme-controller.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Kept the generic form-state and `data-show` binding system in `settings.ts` for now to avoid mixing a structural split with a larger form-state redesign in the same run.
+  - Used explicit initializer/controller boundaries rather than shared implicit globals so each extracted subsystem takes narrow dependencies from the settings page.
+  - Treating top-level `src/views/*.ts` as entrypoints is a build invariant, so non-entry controller files must live under a subdirectory.
+- Blockers / open issues:
+  - No active blocker.
+  - The refactor is partial rather than the final end-state of the earlier plan: import/export actions and generic field/binding logic still live in `settings.ts`.
+  - Manual settings-page verification is still recommended for TOC/search and Anki endpoint refresh flows after the extraction.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - If we continue the refactor, extract the generic field/binding layer and import/export actions next so `settings.ts` becomes a true bootstrap-only file.
+- Handoff:
+  - `settings.ts` is down to 457 lines and the biggest self-contained subsystems now live under `src/views/settings/`; the next safe slice is the generic form-state/bindings layer.
+
+### 2026-04-09 - Completed (Popup Refactor First Wave: Split `popup.ts`)
+- Completed work:
+  - Extracted popup hide-timer and hover state handling into `src/apps/popup/popup-lifecycle-controller.ts`.
+  - Extracted popup placement and client-rect selection logic into `src/apps/popup/popup-positioning.ts`.
+  - Extracted popup card rendering helpers for header/meta/details/state tags into `src/apps/popup/popup-renderer.ts`.
+  - Slimmed `src/apps/popup/popup.ts` so it now coordinates popup state, delegates lifecycle/position/render work to the new helpers, and preserves the existing public popup API used by `popup-manager.ts`.
+- Files changed:
+  - `src/apps/popup/popup.ts`
+  - `src/apps/popup/popup-lifecycle-controller.ts`
+  - `src/apps/popup/popup-positioning.ts`
+  - `src/apps/popup/popup-renderer.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Kept `Popup` as the integration point and avoided changing `show()`, `hide()`, `initHide()`, or pointer-event APIs so the wider foreground app does not need to know about the refactor.
+  - Moved only the highest-value seams in this first wave: timing/lifecycle, placement math, and card-content rendering.
+  - Preserved the existing popup DOM structure and CSS classes by having the renderer return the same sections rather than redesigning markup during the refactor.
+- Blockers / open issues:
+  - No active blocker.
+  - This is a first-wave extraction, not the full popup end-state; button wiring and some popup-local interaction concerns still live in `popup.ts`.
+  - Manual popup verification is still recommended for viewport-edge placement, hover/close timing, and review-state rendering.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Continue the popup refactor by extracting popup-local interaction/button wiring next, then audit the result in-browser for hover timing and placement parity.
+- Handoff:
+  - `popup.ts` now delegates lifecycle, positioning, and content rendering to focused modules under `src/apps/popup/`; the next safe slice is interaction/button handling.
