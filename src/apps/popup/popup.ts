@@ -1,8 +1,11 @@
+import { GetAnkiCreatePathCapability } from '@shared/anki/create-path-capability';
 import { getConfiguration } from '@shared/configuration/get-configuration';
+import { debug } from '@shared/debug';
 import { createElement } from '@shared/dom/create-element';
 import { findElements } from '@shared/dom/find-elements';
 import { withElement } from '@shared/dom/with-element';
 import { getStyleUrl } from '@shared/extension/get-style-url';
+import { ResolveReviewability } from '@shared/jiten/reviewability';
 import { JitenCard } from '@shared/jiten/types';
 import { ForgetCardCommand } from '@shared/messages/background/forget-card.command';
 import { UpdateCardStateCommand } from '@shared/messages/background/update-card-state.command';
@@ -21,6 +24,7 @@ import {
   getReviewStateTags,
   renderPopupContext,
   renderPopupDetails,
+  renderReviewActionStatus,
 } from './popup-renderer';
 
 export class Popup {
@@ -77,6 +81,8 @@ export class Popup {
   private _rotateButtons = createElement('section', { id: 'rotation', class: ['controls'] });
   /** Contains the buttons to manage card states */
   private _gradeButtons = createElement('section', { id: 'grading', class: ['controls'] });
+  /** Contains blocked-state guidance or add-to-Anki review hints */
+  private _reviewActionStatus = createElement('section', { id: 'review-action-status' });
   /** Contains the header data - all information about a word except its meaning */
   private _context = createElement('section', { id: 'context' });
   /** Contains the various meanings of a word */
@@ -109,6 +115,7 @@ export class Popup {
   private _showConjugations: boolean;
   private _showPitchDiagrams: boolean;
   private _disableHeadWordLink: boolean;
+  private _ankiCreatePathAvailable = false;
 
   private _confirmDialog?: ConfirmDialog;
   private _popupLeft = 0;
@@ -204,6 +211,9 @@ export class Popup {
   //#region Configuration
 
   private async applyConfiguration(): Promise<void> {
+    this._ankiCreatePathAvailable = GetAnkiCreatePathCapability(
+      await getConfiguration('ankiMiningConfig'),
+    ).available;
     this._hidePopupAutomatically = await getConfiguration('hidePopupAutomatically');
     this._hidePopupDelay = await getConfiguration('hidePopupDelay');
     this._hideAfterAction = await getConfiguration('hideAfterAction');
@@ -452,6 +462,7 @@ export class Popup {
 
     this._gradeButtons.replaceChildren(...gradeButtons);
     this._gradeButtons.style.display = this._grading.showActions ? '' : 'none';
+    this._reviewActionStatus.style.display = 'none';
   }
 
   private applyPositions(): void {
@@ -465,7 +476,7 @@ export class Popup {
 
     miningTarget.push(this._mineButtons);
     rotationTarget.push(this._rotateButtons);
-    gradingTarget.push(this._gradeButtons);
+    gradingTarget.push(this._gradeButtons, this._reviewActionStatus);
 
     sections.unshift(...before);
     sections.push(...after);
@@ -483,6 +494,7 @@ export class Popup {
 
     this.adjustMiningButtons(this._card);
     this.adjustRotateButtons(this._card);
+    this.adjustGradingButtons(this._card);
     this.adjustContext(this._card);
     this.adjustDetails(this._card);
 
@@ -549,9 +561,41 @@ export class Popup {
     });
   }
 
+  private adjustGradingButtons(card: JitenCard): void {
+    const reviewability = ResolveReviewability({
+      createPathAvailable: this._ankiCreatePathAvailable,
+      reviewMetadata: card.reviewMetadata,
+    });
+    const showReviewStatus =
+      this._grading.showActions && (!reviewability.allowed || reviewability.showAddToAnkiHint);
+
+    debug('ReviewDebug Popup.adjustGradingButtons', {
+      allowed: reviewability.allowed,
+      dueState: card.reviewMetadata.dueState,
+      freshness: card.reviewMetadata.freshness,
+      mappingOutcome: card.reviewMetadata.mappingOutcome,
+      reasonCode: reviewability.reasonCode,
+      resolutionStatus: card.reviewMetadata.resolutionStatus,
+      showActions: this._grading.showActions,
+      showReviewStatus,
+      stateTags: card.reviewMetadata.stateTags,
+      targetCardId: card.reviewMetadata.target?.ankiCardId,
+      wordId: card.wordId,
+      readingIndex: card.readingIndex,
+    });
+
+    this._gradeButtons.style.display =
+      this._grading.showActions && reviewability.allowed ? '' : 'none';
+
+    this._reviewActionStatus.replaceChildren(...renderReviewActionStatus(reviewability));
+    this._reviewActionStatus.style.display =
+      showReviewStatus && (!reviewability.allowed || reviewability.showAddToAnkiHint) ? '' : 'none';
+  }
+
   private adjustContext(card: JitenCard): void {
     this._context.replaceChildren(
       ...renderPopupContext({
+        ankiCreatePathAvailable: this._ankiCreatePathAvailable,
         card,
         disableHeadWordLink: this._disableHeadWordLink,
         showPitchDiagrams: this._showPitchDiagrams,

@@ -1,5 +1,8 @@
+import { GetAnkiCreatePathCapability } from '@shared/anki/create-path-capability';
 import { getConfiguration } from '@shared/configuration/get-configuration';
+import { debug } from '@shared/debug';
 import { displayToast } from '@shared/dom/display-toast';
+import { GetBlockedReviewabilityError, ResolveReviewability } from '@shared/jiten/reviewability';
 import { JitenCard, JitenRating, ReviewMetadata } from '@shared/jiten/types';
 import { GradeCardCommand } from '@shared/messages/background/grade-card.command';
 import { GradeCardCommandResult } from '@shared/messages/background/grade-card.command.types';
@@ -8,6 +11,7 @@ import { Registry } from '../../integration/registry';
 import { BaseController } from './base-controller';
 
 export class GradingController extends BaseController {
+  private _ankiCreatePathAvailable: boolean;
   private _disableReviews: boolean;
   private _showActions: boolean;
   private _useTwoPointGrading: boolean;
@@ -35,8 +39,21 @@ export class GradingController extends BaseController {
 
     const { wordId, readingIndex } = card;
     const targetCardId = card.reviewMetadata.target?.ankiCardId;
+    const termSnapshot = {
+      spelling: card.spelling,
+      reading: card.reading,
+    };
+    const requestedBackend = card.reviewMetadata.backend;
 
-    void new GradeCardCommand(wordId, readingIndex, rating, targetCardId)
+    void new GradeCardCommand(
+      wordId,
+      readingIndex,
+      rating,
+      targetCardId,
+      card.reviewMetadata,
+      termSnapshot,
+      requestedBackend,
+    )
       .call()
       .then((result) => this.handleGradeResult(card, result, targetCardId))
       .catch((error: Error) => {
@@ -45,6 +62,9 @@ export class GradingController extends BaseController {
   }
 
   protected async applyConfiguration(): Promise<void> {
+    this._ankiCreatePathAvailable = GetAnkiCreatePathCapability(
+      await getConfiguration('ankiMiningConfig'),
+    ).available;
     this._useTwoPointGrading = await getConfiguration('jitenUseTwoGrades');
     this._disableReviews = await getConfiguration('jitenDisableReviews');
     this._showActions = await getConfiguration('showGradingActions');
@@ -63,9 +83,11 @@ export class GradingController extends BaseController {
 
     if (card.reviewMetadata.backend !== result.backend) {
       displayToast(
-        'success',
-        `Anki is unavailable right now. Review was submitted to ${result.backend} instead.`,
+        'error',
+        `Review could not stay on ${card.reviewMetadata.backend}. Backend returned ${result.backend}.`,
       );
+
+      return;
     }
 
     if (result.backend === 'anki') {
@@ -96,42 +118,33 @@ export class GradingController extends BaseController {
   }
 
   private canSubmitGrade(card: JitenCard): boolean {
-    const { backend, mappingOutcome, resolutionStatus } = card.reviewMetadata;
+    const reviewability = ResolveReviewability({
+      createPathAvailable: this._ankiCreatePathAvailable,
+      reviewMetadata: card.reviewMetadata,
+    });
 
-    if (backend !== 'anki') {
+    debug('ReviewDebug GradingController.canSubmitGrade', {
+      allowed: reviewability.allowed,
+      dueState: card.reviewMetadata.dueState,
+      freshness: card.reviewMetadata.freshness,
+      mappingOutcome: card.reviewMetadata.mappingOutcome,
+      reasonCode: reviewability.reasonCode,
+      resolutionStatus: card.reviewMetadata.resolutionStatus,
+      stateTags: card.reviewMetadata.stateTags,
+      targetCardId: card.reviewMetadata.target?.ankiCardId,
+      wordId: card.wordId,
+      readingIndex: card.readingIndex,
+    });
+
+    if (reviewability.allowed) {
       return true;
     }
 
-    if (
-      resolutionStatus === 'resolved' &&
-      mappingOutcome === 'selected' &&
-      card.reviewMetadata.target?.ankiCardId
-    ) {
-      return true;
+    const blockedError = GetBlockedReviewabilityError(reviewability);
+
+    if (blockedError) {
+      displayToast('error', blockedError.message, blockedError.code);
     }
-
-    if (resolutionStatus === 'backend-unavailable') {
-      displayToast('error', 'Cannot review: Anki read-side status is unavailable right now.');
-
-      return false;
-    }
-
-    if (resolutionStatus === 'config-insufficient') {
-      displayToast(
-        'error',
-        'Cannot review: Anki read-side matching is not configured well enough.',
-      );
-
-      return false;
-    }
-
-    if (mappingOutcome === 'ambiguous') {
-      displayToast('error', 'Cannot review: multiple Anki targets found for this term.');
-
-      return false;
-    }
-
-    displayToast('error', 'Cannot review: no selected Anki target for this term.');
 
     return false;
   }

@@ -75,6 +75,11 @@ export type ReviewTargetCandidateSummary = {
   ankiTemplateOrd: number;
 };
 
+export type ReviewTermSnapshot = {
+  spelling: string;
+  reading: string;
+};
+
 export type ReviewResolutionDiagnostics = {
   candidateCount?: number;
   candidateSummary?: ReviewTargetCandidateSummary[];

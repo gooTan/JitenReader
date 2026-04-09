@@ -10,3 +10,11 @@ Summarize:
 Then update `docs/implementation-working-log.md` with a start-of-run entry.
 
 Only after that, begin implementation.
+
+
+Plan out the refactor for settings.ts.
+
+#TODO 
+
+
+Audit the refactor to make sure that no functionality was broken from the refactor. 

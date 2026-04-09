@@ -7,7 +7,7 @@ export type GradeCardCommandResult =
     }
   | {
       success: false;
-      backend: 'anki';
+      backend: JitenReviewBackend;
       error: {
         code: string;
         message: string;

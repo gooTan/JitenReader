@@ -1,3 +1,4 @@
+import { ReviewabilityResult } from '@shared/jiten/reviewability';
 import {
   JitenCardState,
   JitenRating,
@@ -7,8 +8,10 @@ import {
   ReviewMappingOutcome,
   ReviewResolutionDiagnostics,
   ReviewResolutionStatus,
+  ReviewTermSnapshot,
   ReviewTargetMetadata,
 } from '@shared/jiten/types';
+import { ReviewBackendId } from './review-backend-selector.types';
 
 export type ReviewDeck = 'mining' | 'blacklist' | 'neverForget' | 'suspend';
 export type ReviewDeckAction = 'add' | 'remove';
@@ -30,7 +33,10 @@ export type ReviewBackendCapabilities = {
 export type ReviewBackendParseMetrics = Record<string, number | string | boolean>;
 export type ReviewGradeContext = {
   requestId?: string;
+  requestedBackend?: ReviewBackendId;
   targetCardId?: number;
+  reviewMetadata?: ReviewMetadata;
+  termSnapshot?: ReviewTermSnapshot;
 };
 export type ReviewCardStateContext = {
   targetCardId?: number;
@@ -47,6 +53,11 @@ export interface ReviewBackend {
     rating: JitenRating,
     context?: ReviewGradeContext,
   ): Promise<void>;
+  getGradeReviewability(
+    wordId: number,
+    readingIndex: number,
+    context?: ReviewGradeContext,
+  ): Promise<ReviewabilityResult>;
   getCardState(
     wordId: number,
     readingIndex: number,

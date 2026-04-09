@@ -1,10 +1,10 @@
 # Implementation Working Log
 
 ## Current Snapshot
-- Current stage: Stage 10 - Complete Anki Read-Side Identity
-- Overall status: Stage 10 foundation is now implemented across shared config normalization, Anki read-side matching, and settings/popup state surfacing; live/manual verification and any follow-up refinements remain.
-- Active backend behavior: Anki read-side matching now uses merged derived-plus-explicit readonly config, template-ord-based filtering, and explicit `resolutionStatus` / `mappingOutcome` metadata; settings-side endpoint refresh now updates readonly override selectors as well as write-side deck/model/field selectors.
-- Last updated: 2026-04-08 18:06:25 +10:00
+- Current stage: Stage 11 - Implement Action Gating and Blocked-State UX
+- Overall status: Stage 10 foundation remains in place and Stage 11's shared reviewability, blocked-state popup UX, controller/backend validation, and the latest silent-fallback/direct-write safety fixes are now implemented in code; manual/live verification is still needed before the stage can be called fully closed.
+- Active backend behavior: Anki read-side matching still uses merged derived-plus-explicit readonly config, template-ord-based filtering, and explicit `resolutionStatus` / `mappingOutcome` metadata; when Anki is the preferred backend, Stage 11 now preserves Anki-blocked intent instead of silently degrading to Jiten reviewability, and Anki write validation now fails closed unless selected-target legitimacy can be proven from trustworthy metadata.
+- Last updated: 2026-04-09 20:09:59 +10:00
 
 ## Architectural Decisions
 ### Decision: Keep Stage 0 output documentation-only
@@ -71,9 +71,9 @@
   - No source/runtime behavior files in `src/` were modified.
 
 ## In Progress
-- Task: Stage 10 implementation verification and closure.
-- Current status: Core Stage 10 implementation is in place and verified by lint/build; live/manual verification against real Anki collections is still outstanding.
-- Next immediate step: Manually validate derived/override config behavior, non-zero template ord matching, and suspended/buried UI surfacing against Anki.
+- Task: Stage 11 action gating and blocked-state UX implementation.
+- Current status: Core Stage 11 gating work is implemented and verified by lint/build, but browser/manual verification for each blocked-state case is still outstanding.
+- Next immediate step: Validate popup and write-path behaviour against real/stubbed Anki states for ambiguous, none/no-create-path, suspended, buried, unavailable, refreshing, and normal selected cases.
 
 ## Open Tasks
 - [x] Trace page parsing and enrichment ownership in content scripts and background worker.
@@ -88,7 +88,7 @@
 
 ## Known Issues / Blockers
 - The path `docs/stages/stage-0-codebase-reconnaissance-and-architecture-map.md` is not present; canonical file is `docs/stages/stage_0_codebase_reconnaissance_and_architecture_map.md`.
-- No active blocker for Stage 10.
+- No active blocker for Stage 11.
 
 ## Verification Status
 - Verified:
@@ -131,6 +131,397 @@
   - suspended/buried frontend surfacing
 
 ## Run History
+### 2026-04-09 - Start-of-Run (Stage 11 Follow-up: Preserve Backend Intent For Stale Anki Actions)
+- Stage:
+  - Stage 11 - Implement Action Gating and Blocked-State UX.
+- Run intent:
+  - Eliminate the last Stage 11 backend-selection drift so Anki-originated grade actions stay Anki-owned through validation and execution even if current global preference changes before click-time.
+- Current implementation state:
+  - Stage 11 popup/controller/backend reviewability is in place, including direct-write fail-closed behavior and term re-resolution before Anki writes.
+  - The remaining gap is action routing: stale Anki-originated popup actions can still be re-selected onto Jiten if backend preference changes before the command reaches the background worker.
+- Exact goal of this run:
+  - Add request-scoped backend intent to the grade path.
+  - Make the selector support action-scoped backend ownership for grade actions without changing parse/read selection semantics.
+  - Ensure Anki-originated actions block when Anki cannot be honoured instead of succeeding via Jiten.
+- Blockers or prerequisites already recorded:
+  - Stage 10 read-side identity and Stage 11 shared reviewability are already in place.
+  - No active blocker is recorded.
+- Risks/assumptions carried in:
+  - Assumption: the safest fix is to add a narrow grade-only backend-intent signal and preserve the existing selector default behavior for all non-grade flows.
+  - Assumption: current “submitted to Jiten instead” success messaging should become effectively unreachable for Anki-originated actions after the fix, but a defensive fallback branch can still remain.
+  - Risk: selector changes could accidentally affect parse/update flows; mitigation is to add an optional action override rather than rewriting global selector policy.
+
+### 2026-04-09 - Completed (Stage 11 Follow-up: Grade Requests Now Preserve Backend Intent)
+- Completed work:
+  - Added request-scoped backend intent to the grade command path so popup-originated actions can say which backend owns the interaction.
+  - Extended the selector with an optional action override used only by grade handling, allowing grade-time selection to preserve Anki ownership without changing default parse/read selection behavior.
+  - Updated the grade handler to:
+    - derive requested backend from explicit command intent first
+    - fall back to `reviewMetadata.backend` when explicit intent is absent
+    - select the backend using that action-scoped intent
+    - return blocked/write errors for whichever backend actually owns the action instead of hard-coding Anki-only handler branches
+  - Updated popup grading dispatch to send the card’s current backend as request intent along with review metadata and term snapshot.
+  - Hardened the popup success branch so a backend mismatch is now treated as an error condition instead of a success toast saying the review was rerouted.
+  - Widened the command result type so error responses can truthfully report the backend that handled the request.
+- Files changed:
+  - `docs/implementation-working-log.md`
+  - `src/background-worker/review-backend/review-backend-selector.types.ts`
+  - `src/background-worker/review-backend/review-backend.types.ts`
+  - `src/background-worker/review-backend/review-backend-selector.ts`
+  - `src/background-worker/jiten-card-actions/grade-card-command.handler.ts`
+  - `src/apps/popup/actions/grading-controller.ts`
+  - `src/shared/messages/background/grade-card.command.ts`
+  - `src/shared/messages/background/grade-card.command.types.ts`
+- Architectural decisions made:
+  - Grade actions now use request-scoped backend ownership while parse/read/update flows continue to use default selector behavior.
+  - Anki-originated actions must remain Anki-owned through validation/execution and block if Anki cannot honour them; they must not be transparently rerouted to Jiten based on current preference drift.
+  - `reviewMetadata.backend` is used as a backward-compatible fallback source of intent when the explicit grade command field is missing.
+- Blockers / open issues:
+  - No active implementation blocker.
+  - Manual/live verification is still needed for stale popup actions after backend preference changes.
+  - The worktree still contains unrelated dirty files from earlier Stage 11 work that were intentionally left untouched in this run.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+  - Manual/live verification not yet performed in this run.
+- Next recommended step:
+  - Manually verify:
+    - popup opened in Anki mode, then Anki integration disabled before click
+    - popup opened in Anki mode, then profile/preference changes before click
+    - explicit `requestedBackend: 'anki'` while Anki is unavailable
+    - normal Jiten grading still works unchanged
+    - normal Anki grading still works unchanged
+- Handoff:
+  - Stage 11 grade actions now preserve backend intent and should no longer succeed via Jiten when they originated as Anki interactions.
+  - The next run should stay in Stage 11, read this log plus `docs/stages/stage_11_implement_action_gating_and_blocked_state_ux.md`, and focus on manual QA of backend-intent drift scenarios.
+
+### 2026-04-09 - Completed (Stage 11 Follow-up: Popup Now Honours Suspended/Buried Blocked Facts Even If Backend Metadata Drifts)
+- Completed work:
+  - Fixed a Stage 11 popup/controller gap where buried or suspended Anki facts could still leave grading controls available when backend metadata had drifted out of the exact `backend === 'anki'` shape the resolver/controller were assuming.
+  - Updated the shared reviewability resolver so blocked Anki facts are evaluated before the non-Anki early-return path:
+    - config-insufficient
+    - backend-unavailable
+    - ambiguous
+    - suspended
+    - buried
+    - stale selected target
+  - Tightened stale-target detection so it keys off the selected-target shape itself rather than the backend string alone.
+  - Removed the grading-controller’s remaining `backend !== 'anki'` short-circuit so click-time validation always respects the shared resolver.
+  - Updated popup action-area rendering so the blocked-status panel is shown whenever the resolver says the action is blocked, even if backend metadata has drifted away from the ideal Anki label.
+- Files changed:
+  - `docs/implementation-working-log.md`
+  - `src/shared/jiten/reviewability.ts`
+  - `src/apps/popup/actions/grading-controller.ts`
+  - `src/apps/popup/popup.ts`
+- Architectural decisions made:
+  - Stage 11 blocked-state facts should take precedence over backend-label drift in the shared resolver because the UI and click path must fail safe when the card metadata still clearly indicates an Anki-blocked state.
+  - Popup action-area visibility should be driven by reviewability outcome, not by a second `backend === 'anki'` gate.
+- Blockers / open issues:
+  - No active implementation blocker.
+  - Manual/live verification is still needed for suspended and buried targets specifically, since that was the reported regression.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+  - Manual/live verification not yet performed in this run.
+- Next recommended step:
+  - Re-test suspended and buried Anki cards in the popup and verify:
+    - grading buttons are hidden
+    - blocked-state panel is visible
+    - click-time grading is also blocked if keyboard shortcuts are used
+- Handoff:
+  - The resolver/controller/popup no longer rely on a strict backend-label match before honouring suspended/buried blocked facts.
+  - The next run should stay in Stage 11, read this log plus `docs/stages/stage_11_implement_action_gating_and_blocked_state_ux.md`, and confirm the reported buried/suspended regression is fixed in live popup testing.
+
+### 2026-04-09 - Start-of-Run (Stage 11 Follow-up: Revalidate Term-Level Identity At Write Time)
+- Stage:
+  - Stage 11 - Implement Action Gating and Blocked-State UX.
+- Run intent:
+  - Close the remaining Stage 11 stale-state safety gap by making backend Anki grade validation recompute current term-level identity instead of trusting previously selected metadata.
+- Current implementation state:
+  - Stage 11 popup gating, controller validation, shared resolver use, unavailable-Anki blocking, and direct-write fail-closed behavior are already in place.
+  - The remaining issue is narrower: when the popup was once validly selected, the backend can still approve a write without rechecking whether the term now resolves to a different Stage 10 identity such as ambiguous, unmapped, or config-insufficient.
+- Exact goal of this run:
+  - Add authoritative backend re-resolution for the specific term being graded.
+  - Reuse existing Stage 10 Anki matching/config logic instead of inventing a second matching model.
+  - Keep the fix inside Stage 11 by tightening validation only, without adding any Stage 12 add-then-rate behavior or new UI flows.
+- Blockers or prerequisites already recorded:
+  - Stage 10 read-side identity and planner/resolver infrastructure are already in place and are the prerequisite for this fix.
+  - No active blocker is recorded.
+- Risks/assumptions carried in:
+  - Assumption: the safest fix is to reuse `getParseReviewStates()` for a single synthetic term payload rather than partially duplicating the Stage 10 matching pipeline inside grade-time validation.
+  - Assumption: write-time validation may be slightly more expensive for Anki grades, but that is acceptable within Stage 11 because correctness and blocked-state safety are the priority.
+  - Risk: grade-time re-resolution must preserve existing suspended/buried fresh-card checks; mitigation is to layer fresh card-state confirmation on top of the re-resolved term identity rather than replacing it.
+
+### 2026-04-09 - Completed (Stage 11 Follow-up: Authoritative Term Re-Resolution Before Anki Write)
+- Completed work:
+  - Added a narrow `ReviewTermSnapshot` payload so the popup can send the current term spelling/reading to the backend grade path without expanding scope into new UI behavior.
+  - Extended `GradeCardCommand` and `ReviewGradeContext` to carry that term snapshot through controller, message, handler, and backend layers.
+  - Reworked Anki grade-time reviewability so the backend now re-resolves the current term using the existing Stage 10 Anki matching/config pipeline before allowing a selected-target write.
+  - The write-time re-resolution uses a single synthetic `JitenRawVocabulary` term plus the existing `getParseReviewStates()` pipeline, keeping Stage 10 as the owner of target identity instead of adding a second matching implementation.
+  - Invalidated the Anki read repository caches before write-time re-resolution so direct grade attempts recheck live note/card/query state rather than relying on parse-time lookup cache entries.
+  - Tightened selected-target approval so a write is only allowed when:
+    - the current term still resolves to `resolved + selected`
+    - the resolved selected Anki card still matches the requested `targetCardId`
+    - the fresh card-state recheck still confirms the target card exists and is not blocked
+  - If the current term re-resolves to ambiguous, none, config-insufficient, or unavailable, the backend now returns that blocked state directly.
+  - If the current term still resolves to a selected target but it no longer matches the attempted card, the backend now fails closed as `blocked-stale` instead of auto-switching or trusting old UI state.
+  - If direct invocations omit the new term snapshot, the backend still fails closed for selected-target writes rather than trusting old selected metadata as authoritative proof.
+- Files changed:
+  - `docs/implementation-working-log.md`
+  - `src/shared/jiten/types.ts`
+  - `src/shared/messages/background/grade-card.command.ts`
+  - `src/apps/popup/actions/grading-controller.ts`
+  - `src/background-worker/jiten-card-actions/grade-card-command.handler.ts`
+  - `src/background-worker/review-backend/review-backend.types.ts`
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+- Architectural decisions made:
+  - For Stage 11 safety, backend write validation is allowed to reuse the Stage 10 read-side resolver with a synthetic single-term payload; that is still within stage boundaries because it strengthens validation rather than adding a new lifecycle.
+  - A popup-supplied term snapshot is acceptable Stage 11 input because it provides term context for backend validation, not a new write feature or alternate identity model.
+  - When current term identity and requested selected target disagree, the backend should classify that as stale/refresh-required rather than auto-resolving to a different card.
+- Blockers / open issues:
+  - No active implementation blocker.
+  - Manual/live verification is still needed for the stale-identity scenarios this fix targets.
+  - The worktree still contains unrelated dirty files from earlier Stage 11 work that were intentionally left untouched in this run.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+  - Manual/live verification not yet performed in this run.
+- Next recommended step:
+  - Manually verify:
+    - selected target becomes ambiguous after initial popup render
+    - selected target becomes unmapped after config/note changes
+    - selected target changes to a different matching card before click
+    - direct/background grade invocation without `termSnapshot`
+    - normal selected Anki grading still succeeds with the new validation path
+- Handoff:
+  - Stage 11 backend safety now rechecks current term identity before Anki writes instead of trusting previously selected popup metadata.
+  - The next run should stay in Stage 11, read this log plus `docs/stages/stage_11_implement_action_gating_and_blocked_state_ux.md`, and focus on manual QA of stale-identity/write-time edge cases.
+
+### 2026-04-09 - Start-of-Run (Stage 11 Follow-up: Eliminate Silent Jiten Fallback + Close Ambiguous Direct-Write Bypass)
+- Stage:
+  - Stage 11 - Implement Action Gating and Blocked-State UX.
+- Run intent:
+  - Finish the remaining Stage 11 compliance gaps from the latest audit without expanding into Stage 12 behavior.
+- Current implementation state:
+  - Stage 11 shared reviewability, popup blocked-state rendering, controller validation, and backend validation are already in place.
+  - Two Stage 11 doc-level gaps remain:
+    - preferred Anki mode can still collapse into a silent Jiten fallback when Anki is unavailable
+    - direct Anki grade attempts can still bypass the ambiguity hard-stop when they provide a `targetCardId` without trustworthy term-level selection metadata
+- Exact goal of this run:
+  - Preserve Anki-blocked intent when preferred backend is Anki but Anki is unavailable so the popup/backend treat it as blocked instead of silently behaving like Jiten.
+  - Make backend grade validation fail closed unless the backend can prove the selected Anki target was authoritatively resolved, preventing ambiguous direct-write bypass.
+  - Keep the Stage 11 create-path seam future-compatible without implementing Stage 12 add-then-rate.
+- Blockers or prerequisites already recorded:
+  - Stage 10 read-side identity remains the prerequisite and is already in place.
+  - Stage 11 first-pass and authority follow-up code are already landed and pass lint/build.
+  - No active blocker is recorded.
+- Risks/assumptions carried in:
+  - Assumption: the safest fix is to preserve the existing Stage 11 resolver contract and tighten how backend selection and grade-time metadata are derived.
+  - Assumption: Jiten backend behavior should remain unchanged except where Anki-blocked intent must no longer silently degrade into Jiten reviewability.
+  - Risk: preserving Anki intent may require carrying preferred-backend status further through the parser/read path; mitigation is to make the selector/status model authoritative instead of adding popup-only special cases.
+
+### 2026-04-09 - Completed (Stage 11 Follow-up: Preserve Anki-Blocked Intent + Fail Closed Without Trusted Selection Context)
+- Completed work:
+  - Updated backend selection so preferred Anki mode keeps using the Anki review backend for Stage 11 reviewability/state flows even when Anki availability probes report unavailable, allowing parser and refresh paths to surface `backend-unavailable` instead of silently collapsing to Jiten.
+  - Tightened Anki grade-time metadata reconstruction so a caller-supplied `targetCardId` no longer manufactures a fresh `selected` state by itself.
+  - Added an explicit trust check for selected-target rebuilds:
+    - fresh selected reviewability is only reconstructed when hinted metadata already proves `backend === 'anki'`, `resolutionStatus === 'resolved'`, `mappingOutcome === 'selected'`, and the selected `ankiCardId` matches the attempted target
+    - otherwise the backend now returns a stale blocked selected-target shape, which preserves suspended/buried detection from fresh card state but blocks normal writes
+  - Tightened fallback metadata so formerly selected targets that disappear or lose trusted selection context become `blocked-stale` rather than slipping back to an allowed selected path.
+- Files changed:
+  - `docs/implementation-working-log.md`
+  - `src/background-worker/review-backend/review-backend-selector.ts`
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+- Architectural decisions made:
+  - For Stage 11 action gating, the preferred backend should remain authoritative for Anki reviewability even when execution availability is degraded; availability should block Anki review, not silently rewrite it into Jiten reviewability.
+  - A raw Anki `targetCardId` is execution data, not proof that the term was authoritatively resolved to a single selected target.
+  - When the backend cannot prove trusted selected-target context, it should fail closed using the existing `blocked-stale` path rather than inventing a new Stage 11 reason code or enabling any Stage 12 behavior.
+- Blockers / open issues:
+  - No active implementation blocker.
+  - Manual/live verification is still needed for the Stage 11 matrix, especially preferred-Anki-unavailable popup behavior and direct/background grade invocation edge cases.
+  - The worktree still contains unrelated dirty files from earlier Stage 11 work that were intentionally left untouched in this run.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+  - Manual/live verification not yet performed in this run.
+- Next recommended step:
+  - Manually verify:
+    - preferred backend = Anki while Anki is unreachable
+    - direct/background grade invocation with `targetCardId` but no `reviewMetadata`
+    - selected target that disappears before write
+    - normal selected Anki grading still succeeds
+- Handoff:
+  - The two latest Stage 11 audit findings are now patched in code and verified by lint/build.
+  - The next run should stay in Stage 11, read this log plus `docs/stages/stage_11_implement_action_gating_and_blocked_state_ux.md`, and focus on manual QA or any parity bug found during popup/Anki validation.
+
+### 2026-04-09 - Start-of-Run (Stage 11 Follow-up: Close Reviewability Authority Gaps)
+- Stage:
+  - Stage 11 - Implement Action Gating and Blocked-State UX.
+- Run intent:
+  - Close the remaining Stage 11 correctness gaps found in the doc-to-code audit so reviewability becomes authoritative across popup rendering, controller checks, background command validation, and backend write execution.
+- Current implementation state:
+  - Stage 11 first-pass gating is already in place:
+    - shared reviewability resolver
+    - popup blocked-state panel
+    - controller-side Anki gating
+    - background/write-side revalidation
+  - Audit found three important follow-up gaps:
+    - popup backend-status rendering still partially re-decides Anki state outside the resolver
+    - background safety still depends on optional foreground-supplied `reviewMetadata`
+    - the create-path hook exists only as a stub and is not wired to real Anki mining-config capability
+- Exact goal of this run:
+  - Refactor the shared resolver to take explicit reviewability inputs instead of inferring capability from `ReviewMetadata` alone.
+  - Add a real Stage 11 create-path capability helper driven by Anki write config, while still returning `allowed === false` until Stage 12 exists.
+  - Make backend Anki grade protection authoritative even when `GradeCardCommand` is invoked directly without foreground metadata.
+  - Remove remaining popup-side fallback logic that can override the shared reviewability result.
+- Blockers or prerequisites already recorded:
+  - Stage 10 read-side identity remains the prerequisite and is already in place.
+  - Stage 11 first-pass implementation is already landed and passes lint/build.
+  - No active blocker is recorded in the working log.
+- Risks/assumptions carried in:
+  - Assumption: the safest fix is to keep Stage 11 reason codes and popup copy stable while changing the internal input plumbing and trust boundaries.
+  - Assumption: Stage 12 add-then-rate still must not be implemented here, but the capability seam should become real and config-backed now.
+  - Risk: backend authority fixes may require a small amount of targeted term-resolution reconstruction in background code; mitigation is to keep the new helper narrow and reuse existing Stage 10 resolution/config logic where possible.
+
+### 2026-04-09 - Completed (Stage 11 Follow-up: Resolver Inputs + Config-Backed Create Path + Backend-Owned Grade Reviewability)
+- Completed work:
+  - Refactored the Stage 11 resolver API so it now accepts one explicit input object instead of trying to infer create-path state from `ReviewMetadata` alone:
+    - `reviewMetadata`
+    - `createPathAvailable`
+  - Added a real config-backed create-path capability helper in shared Anki code:
+    - `src/shared/anki/create-path-capability.ts`
+    - evaluates `ankiMiningConfig`
+    - distinguishes configured-vs-available
+    - still reports `available: false` until Stage 12 enables add-then-rate
+  - Updated foreground Anki reviewability consumers to compute create-path availability from `ankiMiningConfig` and feed that into the shared resolver:
+    - popup grading-area gating
+    - popup backend-status label rendering
+    - grading-controller validation
+  - Removed the remaining popup-side raw fallback logic that could overwrite the shared reviewability result for Anki backend-status labels.
+  - Extended the backend abstraction with a backend-owned `getGradeReviewability()` path so command handling and write execution share one authoritative reviewability computation.
+  - Reworked Anki backend grade validation so it no longer relies on optional foreground metadata as the sole source of truth:
+    - blocked/non-selected/stale metadata is preserved as a hint when it carries term-level facts the backend cannot cheaply reconstruct
+    - selected-target validation is rebuilt from a fresh Anki card read
+    - direct no-target invocations now resolve through backend-owned fallback metadata instead of handler-local ad hoc checks
+  - Updated the grade command handler to call the backend-owned `getGradeReviewability()` method before dispatching writes, rather than re-running a foreground-trusting resolver path in the handler itself.
+  - Added a Jiten backend implementation of `getGradeReviewability()` so the interface stays consistent without changing Jiten behaviour.
+- Files changed:
+  - `docs/implementation-working-log.md`
+  - `src/shared/anki/create-path-capability.ts`
+  - `src/shared/jiten/reviewability.ts`
+  - `src/apps/popup/actions/grading-controller.ts`
+  - `src/apps/popup/popup-renderer.ts`
+  - `src/apps/popup/popup.ts`
+  - `src/background-worker/jiten-card-actions/grade-card-command.handler.ts`
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+  - `src/background-worker/review-backend/jiten-review-backend.ts`
+  - `src/background-worker/review-backend/review-backend.types.ts`
+- Architectural decisions made:
+  - Keep the Stage 11 resolver output contract stable while making resolver inputs explicit and externally supplied.
+  - Model create-path support as a real capability object sourced from `ankiMiningConfig`, but keep Stage 11 reviewability blocked until Stage 12 explicitly enables the lifecycle.
+  - Move authoritative grade-time reviewability ownership into the backend abstraction so the handler and write path can share the same computation instead of duplicating partial logic.
+  - Preserve foreground metadata only as a hint for term-level blocked facts and optimistic stale-state handling, not as the only trust source for selected-target writes.
+- Blockers / open issues:
+  - No active implementation blocker.
+  - Manual/live verification is still needed for the full Stage 11 acceptance matrix.
+  - The worktree still contains unrelated dirty files that were intentionally left untouched in this run:
+    - `docs/codex_start_prompt_template.md`
+    - `src/shared/messages/background/grade-card.command.ts`
+    - `src/styles/popup.scss`
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+  - Manual/live verification not yet performed in this run.
+- Next recommended step:
+  - Validate Stage 11 end-to-end against popup and backend scenarios:
+    - selected + reviewable
+    - none + no create path
+    - ambiguous
+    - suspended
+    - buried
+    - backend unavailable
+    - refresh-pending selected target after a write
+    - direct/background grade invocation without foreground metadata
+- Handoff:
+  - The Stage 11 follow-up authority fixes are now in place in code and verified by lint/build.
+  - The next run should stay in Stage 11, read this log plus `docs/stages/stage_11_implement_action_gating_and_blocked_state_ux.md`, and focus on manual verification or any parity fixes found during real popup/Anki testing.
+
+### 2026-04-09 - Start-of-Run (Stage 11 - Implement Action Gating and Blocked-State UX)
+- Stage:
+  - Stage 11 - Implement Action Gating and Blocked-State UX.
+- Run intent:
+  - Turn Stage 10's richer Anki read-side identity into a single reviewability decision that gates popup grading controls before click-time and explains blocked states clearly.
+- Current implementation state:
+  - Stage 10 already provides richer identity metadata for Anki-backed terms, including `resolutionStatus`, `mappingOutcome`, and surfaced blocked facts such as ambiguous, suspended, and buried states.
+  - Popup/action UX still relies on Stage 10-era labels and controller checks rather than a single shared reviewability resolver.
+  - The working log already notes that popup/action UX does not yet provide the fuller blocked-state panel planned for Stage 11.
+- Exact goal of this run:
+  - Introduce one central reviewability resolver for Anki mode returning the normalized Stage 11 contract (`allowed`, reason/message metadata, add-to-Anki hint flag, and ambiguity candidate summary).
+  - Replace blocked Anki grading controls in the popup with a non-interactive status block and compact blocked-state guidance.
+  - Reuse the same reviewability decision in popup rendering, grading-controller validation, and backend-side safety checks.
+  - Keep `none` architecturally conditionally reviewable via a capability hook, but have that capability resolve to false until Stage 12 implements add-then-rate.
+- Blockers or prerequisites already recorded:
+  - Stage 10's read-side identity foundation is in place and is the prerequisite consumed by this stage.
+  - No active blocker is currently recorded in the working log.
+  - Manual/live Anki verification is still outstanding from Stage 10, so this run should rely on lint/build plus targeted code-path verification unless live validation becomes available later.
+- Risks/assumptions carried in:
+  - Assumption: the safest Stage 11 shape is to centralize policy in shared reviewability logic instead of layering more popup-only conditionals on top of existing Stage 10 metadata.
+  - Assumption: Stage 12 create-and-rate does not exist yet, so the new capability hook should default to unavailable without hard-coding `none` as permanently non-reviewable.
+  - Risk: gating logic could drift if popup/controller/backend each interpret blocked states separately; mitigation is to make them all consume the same normalized resolver output.
+
+### 2026-04-09 - Completed (Stage 11 First Pass: Shared Reviewability Resolver + Popup/Write Gating)
+- Completed work:
+  - Added a shared Stage 11 reviewability module in `src/shared/jiten/reviewability.ts` that normalizes Anki reviewability into:
+    - `allowed`
+    - blocked/reviewable reason codes
+    - user-facing copy
+    - add-to-Anki hint support
+    - compact ambiguous candidate summaries
+  - Added the explicit Stage 12 capability hook shape via `IsAnkiCreateAndRateAvailable()`, which currently resolves to `false` so `none` remains architecturally conditional without enabling add-then-rate yet.
+  - Updated popup grading UX so blocked Anki states replace the grading-control area with a non-interactive status panel instead of leaving rating buttons visible.
+  - Added compact ambiguous-target diagnostics to the popup blocked-state panel using deck/model/template/card-id summaries.
+  - Updated the grading controller to reuse the shared reviewability resolver before dispatching grade requests and surface blocked-state copy via toast fallback.
+  - Extended `GradeCardCommand` to carry current review metadata so the background command handler can reuse the same Stage 11 reviewability decision before dispatching a write.
+  - Hardened the Anki write path to re-read the selected target card before review submission and reject blocked states such as suspended/buried or refresh-sensitive invalid targets even if the UI is stale.
+- Files changed:
+  - `docs/implementation-working-log.md`
+  - `src/shared/jiten/reviewability.ts`
+  - `src/apps/popup/actions/grading-controller.ts`
+  - `src/apps/popup/popup-renderer.ts`
+  - `src/apps/popup/popup.ts`
+  - `src/background-worker/jiten-card-actions/grade-card-command.handler.ts`
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+  - `src/background-worker/review-backend/review-backend.types.ts`
+  - `src/shared/messages/background/grade-card.command.ts`
+  - `src/styles/popup.scss`
+- Architectural decisions made:
+  - Centralized Stage 11 reviewability policy in shared code and used popup/controller/background as consumers so gating rules do not drift across layers.
+  - Treated Stage 12 create-and-rate as an explicit capability hook instead of embedding a permanent "none is blocked" assumption into popup logic.
+  - Added backend-side revalidation in two places:
+    - command-handler reuse of current foreground review metadata for parity with popup gating
+    - fresh Anki card read in the backend write path to protect against stale UI state for selected targets
+  - Interpreted Stage 11 `blocked-stale` narrowly as the refresh-pending selected-target case (`freshness: stale` plus selected target and unknown due state) so normal parse-time Anki metadata does not disable all grading.
+- Blockers / open issues:
+  - No active implementation blocker.
+  - Manual/live browser verification is still needed for all blocked-state cases and for the new popup panel layout.
+  - The dirty worktree already includes unrelated changes in `docs/codex_start_prompt_template.md`; this run did not modify that file.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+  - Manual/live verification not yet performed in this run.
+- Next recommended step:
+  - Verify Stage 11 end-to-end in the popup against Anki-backed scenarios:
+    - selected + reviewable
+    - none + no create path
+    - ambiguous
+    - suspended
+    - buried
+    - backend unavailable
+    - refresh-pending selected target after a write
+- Handoff:
+  - Stage 11's shared rule set and main UI/backend wiring are now in place.
+  - The next run should stay in Stage 11, read this log plus `docs/stages/stage_11_implement_action_gating_and_blocked_state_ux.md`, and focus on manual verification plus any small parity fixes found during real popup testing.
+
 ### 2026-04-08 - Start-of-Run (Stage 10 Structural Refactor: Split `anki-review-backend.ts`)
 - Stage:
   - Stage 10 - Complete Anki Read-Side Identity.
@@ -3820,3 +4211,28 @@ pm run build passes.
   - Audit the refactor for behavioral parity, especially around fragmented ruby handling, misparse marking, and chunked large-page performance.
 - Handoff:
   - `text-highlighter.ts` now delegates map, fragment, DOM, ruby, patch-strategy, and scheduler concerns to focused helpers; the next safe slice is reviewing whether any remaining chunked wrappers can be simplified further without changing behavior.
+
+### 2026-04-09 - Completed (Stage 11 Suspended/Buried Popup Debug Instrumentation)
+- Completed work:
+  - Added targeted debug tracing around the suspended/buried rating-button mismatch to compare popup render-time reviewability, registry card updates, and click-time grading validation.
+  - Instrumented the popup grading renderer to log the card review metadata and `ResolveReviewability()` output each time button visibility is recomputed.
+  - Instrumented `Registry.updateCard(...)` to log review metadata mutations when card state changes propagate into the foreground cache.
+  - Instrumented the grading controller to log click-time reviewability and blocked reason data before it rejects a review.
+- Files changed:
+  - `src/apps/integration/registry.ts`
+  - `src/apps/popup/actions/grading-controller.ts`
+  - `src/apps/popup/popup.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Kept the instrumentation narrowly scoped to existing debug-mode logging so normal users are unaffected and no permanent UX behavior changed.
+  - Logged only the fields needed to diagnose this Stage 11 mismatch: `stateTags`, `resolutionStatus`, `mappingOutcome`, `freshness`, `dueState`, selected target card id, and final reviewability reason.
+- Blockers / open issues:
+  - Root cause is not confirmed yet.
+  - Current leading hypothesis is either stale popup render state after a later `Registry.updateCard(...)` mutation, or a mismatch between render-time metadata and click-time metadata for the same card.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Reproduce the suspended/buried case with debug mode enabled and compare `ReviewDebug Popup.adjustGradingButtons`, `ReviewDebug Registry.updateCard`, and `ReviewDebug GradingController.canSubmitGrade` log lines for the same `wordId/readingIndex`.
+- Handoff:
+  - The trace points are now in place; the next run should capture the three `ReviewDebug` log events during one bad popup session and use the metadata drift, if any, to identify whether this is a rerender issue or a read-model inconsistency.

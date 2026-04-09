@@ -1,10 +1,12 @@
 import { getConfiguration } from '@shared/configuration/get-configuration';
 import { addVocabulary } from '@shared/jiten/add-vocabulary';
+import { createReviewMetadata } from '@shared/jiten/create-review-metadata';
 import { getCardState } from '@shared/jiten/get-card-state';
 import { mapReviewStates } from '@shared/jiten/map-review-states';
 import { removeVocabulary } from '@shared/jiten/remove-vocabulary';
 import { request } from '@shared/jiten/request';
 import { review } from '@shared/jiten/review';
+import { ResolveReviewability } from '@shared/jiten/reviewability';
 import { setCardSentence } from '@shared/jiten/set-card-sentence';
 import { JitenCardState, JitenRawVocabulary, JitenRating } from '@shared/jiten/types';
 import {
@@ -66,6 +68,29 @@ export class JitenReviewBackend implements ReviewBackend {
     _context?: ReviewGradeContext,
   ): Promise<void> {
     return review(rating, wordId, readingIndex);
+  }
+
+  public getGradeReviewability(
+    wordId: number,
+    readingIndex: number,
+    _context?: ReviewGradeContext,
+  ): Promise<ReturnType<typeof ResolveReviewability>> {
+    return Promise.resolve(
+      ResolveReviewability({
+        createPathAvailable: false,
+        reviewMetadata: createReviewMetadata({
+          backend: 'jiten',
+          wordId,
+          readingIndex,
+          stateTags: [],
+          freshness: 'fresh',
+          actionsAvailable: true,
+          resolutionStatus: 'resolved',
+          mappingOutcome: 'selected',
+          dueState: 'unknown',
+        }),
+      }),
+    );
   }
 
   public forgetCard(wordId: number, readingIndex: number): Promise<void> {

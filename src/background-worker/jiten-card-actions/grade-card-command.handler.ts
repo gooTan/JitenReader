@@ -1,5 +1,11 @@
 import { MessageSender } from '@shared/extension/types';
-import { JitenRating } from '@shared/jiten/types';
+import { GetBlockedReviewabilityError } from '@shared/jiten/reviewability';
+import {
+  JitenRating,
+  JitenReviewBackend,
+  ReviewMetadata,
+  ReviewTermSnapshot,
+} from '@shared/jiten/types';
 import { GradeCardCommand } from '@shared/messages/background/grade-card.command';
 import { GradeCardCommandResult } from '@shared/messages/background/grade-card.command.types';
 import { BackgroundCommandHandler } from '../lib/background-command-handler';
@@ -19,14 +25,41 @@ export class GradeCardCommandHandler extends BackgroundCommandHandler<GradeCardC
     readingIndex: number,
     rating: JitenRating,
     targetCardId?: number,
+    reviewMetadata?: ReviewMetadata,
+    termSnapshot?: ReviewTermSnapshot,
+    requestedBackend?: JitenReviewBackend,
   ): Promise<GradeCardCommandResult> {
+    const resolvedRequestedBackend = this.getRequestedBackend(requestedBackend, reviewMetadata);
     const { status: backendStatus, backend: reviewBackend } =
-      await this._reviewBackendSelector.getSelectionSnapshot();
+      await this._reviewBackendSelector.getSelectionSnapshot({
+        requestedBackend: resolvedRequestedBackend,
+      });
+    const reviewability = await reviewBackend.getGradeReviewability(wordId, readingIndex, {
+      requestedBackend: resolvedRequestedBackend,
+      targetCardId,
+      reviewMetadata,
+      termSnapshot,
+    });
+    const blockedError = GetBlockedReviewabilityError(reviewability);
+
+    if (blockedError) {
+      return {
+        success: false,
+        backend: backendStatus.activeBackend,
+        error: {
+          code: blockedError.code,
+          message: blockedError.message,
+        },
+      };
+    }
 
     try {
       await reviewBackend.gradeCard(wordId, readingIndex, rating, {
         requestId: `${wordId}/${readingIndex}:${Date.now()}`,
+        requestedBackend: resolvedRequestedBackend,
         targetCardId,
+        reviewMetadata,
+        termSnapshot,
       });
 
       return {
@@ -34,10 +67,10 @@ export class GradeCardCommandHandler extends BackgroundCommandHandler<GradeCardC
         backend: backendStatus.activeBackend,
       };
     } catch (error) {
-      if (backendStatus.activeBackend === 'anki' && error instanceof TargetedReviewWriteError) {
+      if (error instanceof TargetedReviewWriteError) {
         return {
           success: false,
-          backend: 'anki',
+          backend: backendStatus.activeBackend,
           error: {
             code: error.code,
             message: error.message,
@@ -47,6 +80,23 @@ export class GradeCardCommandHandler extends BackgroundCommandHandler<GradeCardC
       }
 
       throw error;
+    }
+  }
+
+  private getRequestedBackend(
+    requestedBackend: JitenReviewBackend | undefined,
+    reviewMetadata?: ReviewMetadata,
+  ): JitenReviewBackend | undefined {
+    if (requestedBackend) {
+      return requestedBackend;
+    }
+
+    if (reviewMetadata?.backend === 'anki') {
+      return 'anki';
+    }
+
+    if (reviewMetadata?.backend === 'jiten') {
+      return 'jiten';
     }
   }
 }

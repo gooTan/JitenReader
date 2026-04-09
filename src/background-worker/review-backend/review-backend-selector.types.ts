@@ -15,6 +15,10 @@ export type ReviewBackendSelectionSnapshot = {
   backend: ReviewBackend;
 };
 
+export type ReviewBackendSelectionOptions = {
+  requestedBackend?: ReviewBackendId;
+};
+
 export type ReviewBackendRegistry = {
   jiten: ReviewBackend;
   anki?: ReviewBackend;

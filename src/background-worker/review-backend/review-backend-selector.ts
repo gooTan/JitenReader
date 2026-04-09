@@ -2,6 +2,7 @@ import { getConfiguration } from '@shared/configuration/get-configuration';
 import {
   ReviewBackendAvailability,
   ReviewBackendAvailabilityProbes,
+  ReviewBackendSelectionOptions,
   ReviewBackendSelectionSnapshot,
   ReviewBackendId,
   ReviewBackendRegistry,
@@ -33,8 +34,8 @@ export class ReviewBackendSelector {
     private readonly _availabilityCacheTtlMs: number = DEFAULT_AVAILABILITY_CACHE_TTL_MS,
   ) {}
 
-  public async getStatus(): Promise<ReviewBackendStatus> {
-    const preferredBackend = await this.getPreferredBackend();
+  public async getStatus(options?: ReviewBackendSelectionOptions): Promise<ReviewBackendStatus> {
+    const preferredBackend = await this.getPreferredBackend(options);
     const availability = await this.getAvailability(preferredBackend);
     const activeBackend = this.selectActiveBackend(preferredBackend, availability);
 
@@ -62,8 +63,10 @@ export class ReviewBackendSelector {
     return backend;
   }
 
-  public async getSelectionSnapshot(): Promise<ReviewBackendSelectionSnapshot> {
-    const status = await this.getStatus();
+  public async getSelectionSnapshot(
+    options?: ReviewBackendSelectionOptions,
+  ): Promise<ReviewBackendSelectionSnapshot> {
+    const status = await this.getStatus(options);
     const backend = this._backends[status.activeBackend] ?? this._backends.jiten;
 
     return { status, backend };
@@ -73,7 +76,13 @@ export class ReviewBackendSelector {
     return this._backends[id];
   }
 
-  private async getPreferredBackend(): Promise<ReviewBackendId> {
+  private async getPreferredBackend(
+    options?: ReviewBackendSelectionOptions,
+  ): Promise<ReviewBackendId> {
+    if (options?.requestedBackend) {
+      return options.requestedBackend;
+    }
+
     const enableAnkiIntegration = await getConfiguration('enableAnkiIntegration');
 
     return enableAnkiIntegration ? 'anki' : 'jiten';
@@ -133,10 +142,10 @@ export class ReviewBackendSelector {
 
   private selectActiveBackend(
     preferredBackend: ReviewBackendId,
-    availability: Record<ReviewBackendId, ReviewBackendAvailability>,
+    _availability: Record<ReviewBackendId, ReviewBackendAvailability>,
   ): ReviewBackendId {
     if (preferredBackend === 'anki') {
-      return availability.anki === 'available' ? 'anki' : 'jiten';
+      return this._backends.anki ? 'anki' : 'jiten';
     }
 
     return 'jiten';

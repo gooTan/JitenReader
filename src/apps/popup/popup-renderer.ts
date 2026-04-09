@@ -1,9 +1,15 @@
 import { createElement } from '@shared/dom/create-element';
+import {
+  GetReviewabilityCopy,
+  ReviewabilityResult,
+  ResolveReviewability,
+} from '@shared/jiten/reviewability';
 import { JitenCard, JitenCardState } from '@shared/jiten/types';
 import { cleanReading, getPitchDiagramData } from '@shared/pitch-accent-utils';
 import { PARTS_OF_SPEECH } from './part-of-speech';
 
 export interface PopupRenderContextOptions {
+  ankiCreatePathAvailable: boolean;
   card: JitenCard;
   disableHeadWordLink: boolean;
   showPitchDiagrams: boolean;
@@ -33,6 +39,7 @@ export function getReviewStateTags(card: JitenCard): JitenCardState[] {
 }
 
 export function renderPopupContext({
+  ankiCreatePathAvailable,
   card,
   disableHeadWordLink,
   showPitchDiagrams,
@@ -49,7 +56,7 @@ export function renderPopupContext({
       children: [
         getPitchAccentBlock(card, showPitchDiagrams),
         getFrequencyBlock(card),
-        getBackendStatusBlock(card),
+        getBackendStatusBlock(card, ankiCreatePathAvailable),
       ],
     }),
   ];
@@ -90,6 +97,36 @@ export function renderPopupDetails({
       }),
     ]),
   );
+
+  return children;
+}
+
+export function renderReviewActionStatus(reviewability: ReviewabilityResult): HTMLElement[] {
+  const copy = GetReviewabilityCopy(reviewability);
+
+  if (reviewability.allowed && !reviewability.showAddToAnkiHint) {
+    return [];
+  }
+
+  const children: HTMLElement[] = [
+    createElement('div', {
+      class: ['review-action-status-title'],
+      innerText: copy.title,
+    }),
+  ];
+
+  if (copy.body.length) {
+    children.push(
+      createElement('div', {
+        class: ['review-action-status-body'],
+        innerText: copy.body,
+      }),
+    );
+  }
+
+  if (!reviewability.allowed && reviewability.reasonCode === 'blocked-ambiguous') {
+    children.push(renderAmbiguousCandidateSummary(reviewability));
+  }
 
   return children;
 }
@@ -256,24 +293,55 @@ function getFrequencyBlock(card: JitenCard): HTMLDivElement {
   });
 }
 
-function getBackendStatusBlock(card: JitenCard): HTMLDivElement {
-  const { backend, freshness, dueState, resolutionStatus, mappingOutcome, stateTags } =
-    card.reviewMetadata;
+function getBackendStatusBlock(card: JitenCard, ankiCreatePathAvailable: boolean): HTMLDivElement {
+  const { backend, freshness, dueState } = card.reviewMetadata;
   const backendLabel = backend === 'anki' ? 'Anki' : 'Jiten';
   let statusLabel = freshness === 'stale' ? 'refreshing' : 'synced';
 
-  if (resolutionStatus === 'backend-unavailable') {
-    statusLabel = 'backend unavailable';
-  } else if (resolutionStatus === 'config-insufficient') {
-    statusLabel = 'config insufficient';
-  } else if (mappingOutcome === 'ambiguous') {
-    statusLabel = 'ambiguous target';
-  } else if (mappingOutcome === 'none' && backend === 'anki') {
-    statusLabel = 'no target';
-  } else if (stateTags.includes(JitenCardState.SUSPENDED)) {
-    statusLabel = 'suspended';
-  } else if (stateTags.includes(JitenCardState.BURIED)) {
-    statusLabel = 'buried';
+  if (backend === 'anki') {
+    const reviewability = ResolveReviewability({
+      createPathAvailable: ankiCreatePathAvailable,
+      reviewMetadata: card.reviewMetadata,
+    });
+
+    switch (reviewability.reasonCode) {
+      case 'blocked-ambiguous':
+        statusLabel = 'ambiguous target';
+
+        break;
+      case 'blocked-buried':
+        statusLabel = 'buried';
+
+        break;
+      case 'blocked-config-insufficient':
+        statusLabel = 'config insufficient';
+
+        break;
+      case 'blocked-none-no-create-path':
+        statusLabel = 'no target';
+
+        break;
+      case 'blocked-stale':
+        statusLabel = 'refreshing';
+
+        break;
+      case 'blocked-suspended':
+        statusLabel = 'suspended';
+
+        break;
+      case 'blocked-unavailable':
+        statusLabel = 'backend unavailable';
+
+        break;
+      case 'reviewable-create':
+        statusLabel = 'add on review';
+
+        break;
+      case 'reviewable-selected':
+        statusLabel = freshness === 'stale' ? 'refreshing' : 'synced';
+
+        break;
+    }
   } else if (dueState === 'unavailable') {
     statusLabel = 'backend unavailable';
   }
@@ -291,6 +359,48 @@ function getBackendStatusBlock(card: JitenCard): HTMLDivElement {
       }),
     ],
   });
+}
+
+function renderAmbiguousCandidateSummary(reviewability: ReviewabilityResult): HTMLElement {
+  const summaryItems = reviewability.candidateSummary.slice(0, 3);
+  const hiddenCount = Math.max(0, reviewability.candidateSummary.length - summaryItems.length);
+
+  return createElement('div', {
+    class: ['review-action-status-candidates'],
+    children: [
+      createElement('div', {
+        class: ['review-action-status-candidates-label'],
+        innerText:
+          reviewability.candidateSummary.length > 1
+            ? `${reviewability.candidateSummary.length} matching targets`
+            : 'Matching target',
+      }),
+      createElement('ul', {
+        class: ['review-action-status-candidates-list'],
+        children: summaryItems.map((candidate) =>
+          createElement('li', {
+            innerText: formatCandidateSummary(candidate),
+          }),
+        ),
+      }),
+      hiddenCount > 0
+        ? createElement('div', {
+            class: ['review-action-status-candidates-more'],
+            innerText: `+${hiddenCount} more target${hiddenCount === 1 ? '' : 's'}`,
+          })
+        : false,
+    ],
+  });
+}
+
+function formatCandidateSummary(
+  candidate: ReviewabilityResult['candidateSummary'][number],
+): string {
+  const template = candidate.ankiTemplateName?.length
+    ? candidate.ankiTemplateName
+    : `Template ${candidate.ankiTemplateOrd + 1}`;
+
+  return `${candidate.ankiDeck} / ${candidate.ankiModel} / ${template} / Card ${candidate.ankiCardId}`;
 }
 
 function getConjugationsBlock(conjugations: string[]): HTMLDivElement | null {

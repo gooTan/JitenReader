@@ -1,3 +1,4 @@
+import { debug } from '@shared/debug';
 import { JitenCard, JitenCardState, ReviewMetadata } from '@shared/jiten/types';
 import { BatchController } from '../batches/batch-controller';
 import { BaseParser } from '../parser/base.parser';
@@ -65,6 +66,16 @@ export class Registry {
     if (!card) {
       return;
     }
+
+    debug('ReviewDebug Registry.updateCard', {
+      freshness: reviewMetadata.freshness,
+      mappingOutcome: reviewMetadata.mappingOutcome,
+      resolutionStatus: reviewMetadata.resolutionStatus,
+      stateTags: reviewMetadata.stateTags,
+      targetCardId: reviewMetadata.target?.ankiCardId,
+      wordId,
+      readingIndex,
+    });
 
     card.cardState = state;
     card.reviewBackend = reviewMetadata.backend;

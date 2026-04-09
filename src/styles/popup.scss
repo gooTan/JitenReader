@@ -104,6 +104,49 @@
       }
     }
 
+    &#review-action-status {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35em;
+      padding: 0.55em 0.7em;
+      border-radius: 0.45em;
+      background-color: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      font-size: 0.8em;
+      line-height: 1.35;
+
+      .review-action-status-title {
+        font-weight: 700;
+        color: #ffd280;
+      }
+
+      .review-action-status-body {
+        color: rgba(255, 255, 255, 0.88);
+      }
+
+      .review-action-status-candidates {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25em;
+        margin-top: 0.2em;
+      }
+
+      .review-action-status-candidates-label,
+      .review-action-status-candidates-more {
+        font-size: 0.9em;
+        color: rgba(255, 255, 255, 0.7);
+      }
+
+      .review-action-status-candidates-list {
+        margin: 0;
+        padding-left: 1.15em;
+
+        li {
+          margin: 0.1em 0;
+        }
+      }
+    }
+
     &#context {
       display: flex;
       flex-direction: column;
