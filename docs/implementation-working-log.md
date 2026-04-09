@@ -3690,3 +3690,74 @@ pm run build passes.
   - Continue the popup refactor by extracting popup-local interaction/button wiring next, then audit the result in-browser for hover timing and placement parity.
 - Handoff:
   - `popup.ts` now delegates lifecycle, positioning, and content rendering to focused modules under `src/apps/popup/`; the next safe slice is interaction/button handling.
+
+### 2026-04-09 - Start-of-Run (Word Style Editor Refactor: Split `html-word-style-editor-element.ts`)
+- Stage:
+  - Stage 10 - Complete Anki Read-Side Identity.
+- Run intent:
+  - Refactor `src/views/elements/html-word-style-editor-element.ts` into smaller helper modules while preserving the existing custom element API and theme editor behaviour.
+- Current implementation state:
+  - Stage 10 state-surfacing work is already in place, including word-style support for the newer Anki-backed state tags.
+  - `html-word-style-editor-element.ts` currently mixes custom-element lifecycle, theme CRUD/import-export, preview rendering, state-section rendering, effect-control rendering, autosave, and change emission in one file.
+- Exact goal of this run:
+  - Extract the highest-value internal seams first:
+    - shared DOM/effect-control helpers
+    - preview rendering
+    - state/effect section rendering
+    - theme bar/theme action flow
+  - Keep the element’s `value`/`name` contract, hidden input syncing, and debounced change behaviour unchanged.
+- Blockers or prerequisites already recorded:
+  - No blocker.
+  - This should remain a structural refactor only; no word-style feature redesign.
+- Risks/assumptions carried in:
+  - Assumption: keeping `_config` ownership in the host element for the first pass is the safest way to preserve autosave and emitted change semantics.
+  - Main risk is hidden coupling between theme actions, `_syncFromConfig()`, and section rebuild helpers; mitigation is to extract narrow modules with explicit callbacks and preserve existing DOM classes/markup.
+
+### 2026-04-09 - Completed (Word Style Editor Refactor First Wave: Split `html-word-style-editor-element.ts`)
+- Completed work:
+  - Reduced `src/views/elements/html-word-style-editor-element.ts` to a slimmer custom-element coordinator that now focuses on lifecycle, config ownership, hidden-input syncing, save/import actions, and debounced change emission.
+  - Extracted shared DOM helper creation into `src/views/elements/word-style-editor/word-style-editor-dom.ts`.
+  - Extracted effect defaults and reusable effect-control builders into `src/views/elements/word-style-editor/word-style-editor-effect-controls.ts`.
+  - Extracted preview rendering and preview-theme toggle handling into `src/views/elements/word-style-editor/word-style-editor-preview.ts`.
+  - Extracted state/effect section rendering into `src/views/elements/word-style-editor/word-style-editor-state-sections.ts`.
+  - Extracted theme-bar construction plus dropdown/action-visibility helpers into `src/views/elements/word-style-editor/word-style-editor-theme-controls.ts`.
+- Files changed:
+  - `src/views/elements/html-word-style-editor-element.ts`
+  - `src/views/elements/word-style-editor/word-style-editor-dom.ts`
+  - `src/views/elements/word-style-editor/word-style-editor-effect-controls.ts`
+  - `src/views/elements/word-style-editor/word-style-editor-preview.ts`
+  - `src/views/elements/word-style-editor/word-style-editor-state-sections.ts`
+  - `src/views/elements/word-style-editor/word-style-editor-theme-controls.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Kept `_config`, saved-theme state, autosave scheduling, hidden-input syncing, and bubbled `change` emission in the host element so the public custom-element contract stays unchanged.
+  - Moved rendering-heavy and control-heavy logic into a dedicated `word-style-editor/` helper subfolder to avoid turning helper files into separate view entrypoints.
+  - Used explicit callbacks from the host element into the extracted state-section module so effect edits still flow through the same autosave and emit-change paths.
+- Blockers / open issues:
+  - No active blocker.
+  - This is a first-wave refactor, not the final end-state: the host element still owns the actual theme CRUD/import action bodies and autosave orchestration.
+  - Manual verification is still recommended for saved-theme CRUD, import/export, autosave, and preview updates.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Continue by extracting the remaining theme CRUD/import/autosave action flow into a dedicated controller if we want `html-word-style-editor-element.ts` to become a near-bootstrap-only host.
+- Handoff:
+  - The word-style editor now delegates DOM/effect/preview/state-section rendering to focused helpers under `src/views/elements/word-style-editor/`; the next safe slice is theme action orchestration and autosave flow.
+
+### 2026-04-09 - Start-of-Run (Word Style Editor Follow-up: Fix Preview Toggle Regression)
+- Stage:
+  - Stage 10 - Complete Anki Read-Side Identity.
+- Run intent:
+  - Fix the preview background toggle regression introduced during the word-style editor refactor without changing the surrounding module split.
+- Current implementation state:
+  - The word-style editor helper split is in place and lint/build are passing.
+  - Audit found one regression: the extracted preview toggle closes over stale `previewDark` state, so repeated clicks do not keep toggling correctly.
+- Exact goal of this run:
+  - Restore bidirectional preview background toggling while preserving the new helper/module boundaries and the rest of the editor behaviour.
+- Blockers or prerequisites already recorded:
+  - No blocker.
+  - Verification should confirm lint/build still pass after the targeted fix.
+- Risks/assumptions carried in:
+  - Assumption: the safest fix is to make the preview helper read/write current preview state explicitly rather than partially inlining old preview logic back into the host element.
+  - Low risk because the change is isolated to preview-toggle behaviour.
