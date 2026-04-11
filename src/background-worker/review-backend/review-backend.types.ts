@@ -31,6 +31,13 @@ export type ReviewBackendCapabilities = {
 };
 
 export type ReviewBackendParseMetrics = Record<string, number | string | boolean>;
+export type ReviewGradeResult = {
+  backend: ReviewBackendId;
+  reviewMetadata?: ReviewMetadata;
+  targetCardId?: number;
+  transaction?: 'reviewed-existing' | 'created-and-reviewed';
+  sentenceFieldCount?: number;
+};
 export type ReviewGradeContext = {
   requestId?: string;
   requestedBackend?: ReviewBackendId;
@@ -52,7 +59,7 @@ export interface ReviewBackend {
     readingIndex: number,
     rating: JitenRating,
     context?: ReviewGradeContext,
-  ): Promise<void>;
+  ): Promise<ReviewGradeResult>;
   getGradeReviewability(
     wordId: number,
     readingIndex: number,

@@ -17,6 +17,7 @@ export class GradingActions {
     'jitenReviewPass',
   ]);
   private _card?: JitenCard;
+  private _sentence?: string;
 
   constructor(private _controller: GradingController) {
     const { events } = Registry;
@@ -30,13 +31,15 @@ export class GradingActions {
     events.on('jitenReviewPass', () => this.reviewCard('good'));
   }
 
-  public activate(context: HTMLElement): void {
+  public activate(context: HTMLElement, sentence?: string): void {
     this._card = Registry.getCardFromElement(context);
+    this._sentence = sentence;
     this._keyManager.activate();
   }
 
   public deactivate(): void {
     this._card = undefined;
+    this._sentence = undefined;
     this._keyManager.deactivate();
   }
 
@@ -45,6 +48,6 @@ export class GradingActions {
       return;
     }
 
-    this._controller.gradeCard(this._card, rating);
+    this._controller.gradeCard(this._card, rating, this._sentence);
   }
 }

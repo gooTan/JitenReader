@@ -14,6 +14,7 @@ import {
   ReviewBackendCapabilities,
   ReviewCardStateContext,
   ReviewGradeContext,
+  ReviewGradeResult,
   ReviewDeck,
   ReviewDeckAction,
   ReviewTermResolutionMap,
@@ -66,8 +67,10 @@ export class JitenReviewBackend implements ReviewBackend {
     readingIndex: number,
     rating: JitenRating,
     _context?: ReviewGradeContext,
-  ): Promise<void> {
-    return review(rating, wordId, readingIndex);
+  ): Promise<ReviewGradeResult> {
+    return review(rating, wordId, readingIndex).then(() => ({
+      backend: 'jiten',
+    }));
   }
 
   public getGradeReviewability(

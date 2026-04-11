@@ -35,6 +35,7 @@ export type LocalEvents = KeybindEvents &
   ReleaseKeybindEvents & {
     keydown: KeybindEvent;
     keyup: KeybindEvent;
+    popupStateChanged: [[], void];
   };
 
 export type LocalEventArgs<T extends keyof LocalEvents> = LocalEvents[T][0];

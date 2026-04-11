@@ -162,6 +162,11 @@ export class Popup {
       }, 1);
     });
     onBroadcastMessage('configurationUpdated', () => this.applyConfiguration(), true);
+    Registry.events.on('popupStateChanged', () => {
+      if (this.isVisibile()) {
+        this.rerender();
+      }
+    });
   }
 
   public show(context: HTMLElement, sentence?: string): void {
@@ -456,7 +461,7 @@ export class Popup {
         id: grade,
         class: ['outline', grade],
         innerText: grade,
-        handler: () => this._grading.gradeCard(this._card!, grade),
+        handler: () => this._grading.gradeCard(this._card!, grade, this._sentence),
       }),
     );
 
@@ -502,6 +507,9 @@ export class Popup {
   }
 
   private adjustMiningButtons(card: JitenCard): void {
+    this._mineButtons.style.display =
+      this._mining.showActions && card.reviewMetadata.backend !== 'anki' ? '' : 'none';
+
     const isNF = cardHasState('neverForget', card);
     const isBL = cardHasState('blacklist', card);
     const isSP = cardHasState('suspend', card);
@@ -518,6 +526,9 @@ export class Popup {
   }
 
   private adjustRotateButtons(card: JitenCard): void {
+    this._rotateButtons.style.display =
+      this._rotation.showActions && card.reviewMetadata.backend !== 'anki' ? '' : 'none';
+
     const previous = this._rotation.getNextCardState(card, -1);
     const next = this._rotation.getNextCardState(card, 1);
     const same = previous === next;
@@ -566,8 +577,10 @@ export class Popup {
       createPathAvailable: this._ankiCreatePathAvailable,
       reviewMetadata: card.reviewMetadata,
     });
+    const isPending = this._grading.isPending(card);
     const showReviewStatus =
-      this._grading.showActions && (!reviewability.allowed || reviewability.showAddToAnkiHint);
+      this._grading.showActions &&
+      (isPending || !reviewability.allowed || reviewability.showAddToAnkiHint);
 
     debug('ReviewDebug Popup.adjustGradingButtons', {
       allowed: reviewability.allowed,
@@ -576,6 +589,7 @@ export class Popup {
       mappingOutcome: card.reviewMetadata.mappingOutcome,
       reasonCode: reviewability.reasonCode,
       resolutionStatus: card.reviewMetadata.resolutionStatus,
+      isPending,
       showActions: this._grading.showActions,
       showReviewStatus,
       stateTags: card.reviewMetadata.stateTags,
@@ -585,11 +599,27 @@ export class Popup {
     });
 
     this._gradeButtons.style.display =
-      this._grading.showActions && reviewability.allowed ? '' : 'none';
+      this._grading.showActions && reviewability.allowed && !isPending ? '' : 'none';
 
-    this._reviewActionStatus.replaceChildren(...renderReviewActionStatus(reviewability));
-    this._reviewActionStatus.style.display =
-      showReviewStatus && (!reviewability.allowed || reviewability.showAddToAnkiHint) ? '' : 'none';
+    this._reviewActionStatus.replaceChildren(
+      ...(isPending
+        ? [
+            createElement('div', {
+              class: ['review-status-copy'],
+              children: [
+                createElement('strong', {
+                  innerText:
+                    card.reviewMetadata.backend === 'anki' &&
+                    card.reviewMetadata.mappingOutcome === 'none'
+                      ? 'Adding to Anki and applying rating...'
+                      : 'Applying rating...',
+                }),
+              ],
+            }),
+          ]
+        : renderReviewActionStatus(reviewability)),
+    );
+    this._reviewActionStatus.style.display = showReviewStatus ? '' : 'none';
   }
 
   private adjustContext(card: JitenCard): void {

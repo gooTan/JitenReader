@@ -1,11 +1,14 @@
 import { DeckConfiguration } from './types';
+import { ResolveAnkiWriteTarget } from './write-target';
 
 export type AnkiCreatePathCapabilityReason =
-  | 'stage12-disabled'
+  | 'ready'
   | 'missing-deck'
   | 'missing-model'
   | 'missing-word-field'
-  | 'missing-template-targets';
+  | 'missing-template-targets'
+  | 'missing-card-template-ord'
+  | 'ambiguous-card-template-ord';
 
 export type AnkiCreatePathCapability = {
   configured: boolean;
@@ -23,56 +26,26 @@ export type AnkiCreatePathCapability = {
 export function GetAnkiCreatePathCapability(
   miningConfig: DeckConfiguration,
 ): AnkiCreatePathCapability {
-  const deck = miningConfig.deck.trim();
-  const model = miningConfig.model.trim();
-  const wordField = miningConfig.wordField.trim();
-  const readingField = miningConfig.readingField.trim();
-  const templateTargetCount = miningConfig.templateTargets.filter((target) => {
-    return target.field.trim().length > 0 && target.template.trim().length > 0;
-  }).length;
+  const resolution = ResolveAnkiWriteTarget(miningConfig);
 
-  if (!deck.length) {
+  if (!resolution.available) {
     return {
       configured: false,
       available: false,
-      reason: 'missing-deck',
-    };
-  }
-
-  if (!model.length) {
-    return {
-      configured: false,
-      available: false,
-      reason: 'missing-model',
-    };
-  }
-
-  if (!wordField.length) {
-    return {
-      configured: false,
-      available: false,
-      reason: 'missing-word-field',
-    };
-  }
-
-  if (templateTargetCount === 0) {
-    return {
-      configured: false,
-      available: false,
-      reason: 'missing-template-targets',
+      reason: resolution.reason,
     };
   }
 
   return {
     configured: true,
-    available: false,
-    reason: 'stage12-disabled',
+    available: true,
+    reason: 'ready',
     target: {
-      deck,
-      model,
-      readingField,
-      templateTargetCount,
-      wordField,
+      deck: resolution.target.deck,
+      model: resolution.target.model,
+      readingField: resolution.target.readingField,
+      templateTargetCount: resolution.target.templateTargets.length,
+      wordField: resolution.target.wordField,
     },
   };
 }

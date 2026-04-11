@@ -1,6 +1,11 @@
 import { GetAnkiCreatePathCapability } from '@shared/anki/create-path-capability';
+import {
+  getMaterializedSentenceFieldCount,
+  materializeAnkiNoteFields,
+} from '@shared/anki/materialize-note-fields';
 import { getReadonlyDiscoverWordConfigurationSummary } from '@shared/anki/readonly-config';
-import { targetedReviewWrite } from '@shared/anki/targeted-review-write';
+import { targetedReviewCommit } from '@shared/anki/targeted-review-commit';
+import { AnkiWriteTargetIssueCode, ResolveAnkiWriteTarget } from '@shared/anki/write-target';
 import { getConfiguration } from '@shared/configuration/get-configuration';
 import { createReviewMetadata } from '@shared/jiten/create-review-metadata';
 import {
@@ -42,12 +47,14 @@ import {
   ReviewDeck,
   ReviewDeckAction,
   ReviewGradeContext,
+  ReviewGradeResult,
   ReviewTermResolution,
   ReviewTermResolutionMap,
 } from './review-backend.types';
 
 export class AnkiReviewBackend implements ReviewBackend {
   private _lastParseMetrics?: AnkiParseLookupMetrics;
+  private readonly _pendingGradeRequests = new Set<string>();
   private readonly _readContext = new AnkiReadContext();
   private readonly _repository = new AnkiReadRepository();
 
@@ -162,7 +169,7 @@ export class AnkiReviewBackend implements ReviewBackend {
     readingIndex: number,
     rating: JitenRating,
     context?: ReviewGradeContext,
-  ): Promise<void> {
+  ): Promise<ReviewGradeResult> {
     const reviewability = await this.getGradeReviewability(wordId, readingIndex, context);
     const blockedError = GetBlockedReviewabilityError(reviewability);
 
@@ -177,43 +184,38 @@ export class AnkiReviewBackend implements ReviewBackend {
       );
     }
 
-    const targetCardId = context?.targetCardId;
+    const requestKey = `${wordId}/${readingIndex}`;
 
-    if (!targetCardId || targetCardId <= 0) {
+    if (this._pendingGradeRequests.has(requestKey)) {
       throw new TargetedReviewWriteError(
-        'MISSING_TARGET_CARD',
-        'Missing selected Anki target card for review submission.',
+        'REQUEST_IN_FLIGHT',
+        'This Anki review action is already in progress.',
       );
     }
 
-    const targetCard = await this._repository.readCardFresh(targetCardId);
+    const reviewMetadata = await this.buildGradeReviewMetadata(wordId, readingIndex, context);
+    const isSelectedTarget =
+      reviewMetadata.resolutionStatus === 'resolved' &&
+      reviewMetadata.mappingOutcome === 'selected' &&
+      !!reviewMetadata.target?.ankiCardId;
 
-    if (targetCard?.cardId !== targetCardId) {
-      throw new TargetedReviewWriteError(
-        'MISSING_TARGET_CARD',
-        'The selected Anki target card could not be found.',
-      );
+    this._pendingGradeRequests.add(requestKey);
+
+    try {
+      if (isSelectedTarget) {
+        return await this.commitToExistingCard(
+          wordId,
+          readingIndex,
+          rating,
+          reviewMetadata,
+          context,
+        );
+      }
+
+      return await this.commitByCreatingCard(wordId, readingIndex, rating, reviewMetadata, context);
+    } finally {
+      this._pendingGradeRequests.delete(requestKey);
     }
-
-    const response = await targetedReviewWrite(
-      {
-        version: 1,
-        requestId: context?.requestId,
-        cardId: targetCardId,
-        rating,
-      },
-      { showToastOnError: false },
-    );
-
-    if (!response.success) {
-      throw new TargetedReviewWriteError(
-        response.error.code,
-        response.error.message,
-        response.error.details,
-      );
-    }
-
-    this._repository.invalidateCard(targetCardId);
   }
 
   public async getGradeReviewability(
@@ -561,5 +563,231 @@ export class AnkiReviewBackend implements ReviewBackend {
       target: hintedMetadata?.target,
       diagnostics: hintedMetadata?.diagnostics,
     });
+  }
+
+  private async commitToExistingCard(
+    wordId: number,
+    readingIndex: number,
+    rating: Exclude<JitenRating, 'unknown'>,
+    reviewMetadata: ReviewMetadata,
+    context?: ReviewGradeContext,
+  ): Promise<ReviewGradeResult> {
+    const targetCardId = context?.targetCardId ?? reviewMetadata.target?.ankiCardId;
+
+    if (!targetCardId || targetCardId <= 0) {
+      throw new TargetedReviewWriteError(
+        'MISSING_TARGET_CARD',
+        'Missing selected Anki target card for review submission.',
+      );
+    }
+
+    const targetCard = await this._repository.readCardFresh(targetCardId);
+
+    if (targetCard?.cardId !== targetCardId) {
+      throw new TargetedReviewWriteError(
+        'MISSING_TARGET_CARD',
+        'The selected Anki target card could not be found.',
+      );
+    }
+
+    const response = await targetedReviewCommit(
+      {
+        version: 1,
+        requestId: context?.requestId,
+        term: {
+          key: `${wordId}/${readingIndex}`,
+          wordId,
+          readingIndex,
+          spelling: context?.termSnapshot?.spelling ?? '',
+          reading: context?.termSnapshot?.reading ?? '',
+        },
+        rating,
+        target: {
+          kind: 'existing-card',
+          cardId: targetCardId,
+        },
+      },
+      { showToastOnError: false },
+    );
+
+    return this.buildCommitResult(wordId, readingIndex, response);
+  }
+
+  private async commitByCreatingCard(
+    wordId: number,
+    readingIndex: number,
+    rating: Exclude<JitenRating, 'unknown'>,
+    reviewMetadata: ReviewMetadata,
+    context?: ReviewGradeContext,
+  ): Promise<ReviewGradeResult> {
+    if (
+      reviewMetadata.resolutionStatus !== 'resolved' ||
+      reviewMetadata.mappingOutcome !== 'none'
+    ) {
+      throw new TargetedReviewWriteError(
+        'WRITE_TARGET_INVALID',
+        'Cannot create a new Anki card for the current review state.',
+      );
+    }
+
+    const termSnapshot = context?.termSnapshot;
+
+    if (!termSnapshot) {
+      throw new TargetedReviewWriteError(
+        'INVALID_REQUEST',
+        'Missing term details required for Anki note creation.',
+      );
+    }
+
+    const miningConfig = await getConfiguration('ankiMiningConfig');
+    const includeSentenceFields = await getConfiguration('setSentences');
+    const writeTarget = ResolveAnkiWriteTarget(miningConfig);
+
+    if (!writeTarget.available) {
+      throw this.createWriteTargetError(writeTarget.reason);
+    }
+
+    const response = await targetedReviewCommit(
+      {
+        version: 1,
+        requestId: context?.requestId,
+        term: {
+          key: `${wordId}/${readingIndex}`,
+          wordId,
+          readingIndex,
+          spelling: termSnapshot.spelling,
+          reading: termSnapshot.reading,
+        },
+        rating,
+        target: {
+          kind: 'create-and-review',
+          writeTarget: {
+            deck: writeTarget.target.deck,
+            model: writeTarget.target.model,
+            wordField: writeTarget.target.wordField,
+            readingField: writeTarget.target.readingField,
+            cardTemplateOrd: writeTarget.target.cardTemplateOrd,
+          },
+          noteFields: materializeAnkiNoteFields(
+            writeTarget.target,
+            termSnapshot,
+            includeSentenceFields,
+          ),
+          sentenceFieldCount: getMaterializedSentenceFieldCount(
+            writeTarget.target,
+            termSnapshot,
+            includeSentenceFields,
+          ),
+        },
+      },
+      { showToastOnError: false },
+    );
+
+    return this.buildCommitResult(wordId, readingIndex, response);
+  }
+
+  private async buildCommitResult(
+    wordId: number,
+    readingIndex: number,
+    response: Awaited<ReturnType<typeof targetedReviewCommit>>,
+  ): Promise<ReviewGradeResult> {
+    if (!response.success) {
+      throw new TargetedReviewWriteError(
+        response.error.code,
+        response.error.message,
+        response.error.details,
+      );
+    }
+
+    this._repository.invalidateAll();
+
+    let dueState: ReviewMetadata['dueState'] = 'unknown';
+    let stateTags: JitenCardState[];
+
+    try {
+      await this._readContext.ensureReady();
+
+      const due = this._readContext.isCardDue({
+        queue: response.result.queue,
+        due: response.result.due,
+      });
+
+      dueState = due ? 'due' : 'notDue';
+      stateTags = getStateTagsForCard(
+        { queue: response.result.queue },
+        response.result.interval,
+        due,
+      );
+    } catch {
+      stateTags = this.getStateTagsFromCommitSnapshot(response.result.reviewState);
+    }
+
+    const reviewMetadata = createReviewMetadata({
+      backend: 'anki',
+      wordId,
+      readingIndex,
+      stateTags,
+      freshness: 'fresh',
+      actionsAvailable: true,
+      resolutionStatus: 'resolved',
+      mappingOutcome: 'selected',
+      dueState,
+      target: {
+        key: `anki:${response.result.cardId}`,
+        wordId,
+        readingIndex,
+        ankiNoteId: response.result.noteId,
+        ankiCardId: response.result.cardId,
+        ankiDeck: response.result.deckName,
+        ankiModel: response.result.modelName,
+        ankiTemplateOrd: response.result.templateOrd,
+        ankiTemplateName: response.result.templateName,
+      },
+    });
+
+    return {
+      backend: 'anki',
+      reviewMetadata,
+      targetCardId: response.result.cardId,
+      transaction: response.result.transaction,
+      sentenceFieldCount: response.result.sentenceFieldCount,
+    };
+  }
+
+  private getStateTagsFromCommitSnapshot(reviewState: string): JitenCardState[] {
+    switch (reviewState) {
+      case 'new':
+        return [JitenCardState.NEW];
+      case 'learning':
+        return [JitenCardState.YOUNG];
+      case 'review':
+        return [JitenCardState.YOUNG];
+      case 'suspended':
+        return [JitenCardState.SUSPENDED];
+      case 'buried':
+        return [JitenCardState.BURIED];
+      default:
+        return [];
+    }
+  }
+
+  private createWriteTargetError(reason: AnkiWriteTargetIssueCode): TargetedReviewWriteError {
+    switch (reason) {
+      case 'ambiguous-card-template-ord':
+        return new TargetedReviewWriteError(
+          'WRITE_TARGET_AMBIGUOUS',
+          'Cannot review in Anki: multiple write targets match this term.',
+        );
+      case 'missing-card-template-ord':
+      case 'missing-deck':
+      case 'missing-model':
+      case 'missing-word-field':
+      case 'missing-template-targets':
+      default:
+        return new TargetedReviewWriteError(
+          'WRITE_TARGET_INVALID',
+          'Cannot review in Anki: no valid write target is configured.',
+        );
+    }
   }
 }

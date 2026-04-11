@@ -7,7 +7,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from jiten_targeted_review.service import handle_request
+from jiten_targeted_review.service import handle_commit_request, handle_request
 
 
 @dataclass
@@ -21,6 +21,9 @@ class FakeCard:
     ivl: int
     reps: int
     lapses: int
+    model_name: str = 'Mining Model'
+    template_ord: int = 0
+    template_name: str = 'Card 1'
 
 
 class FakeRuntime:
@@ -33,6 +36,7 @@ class FakeRuntime:
         self._cards = cards
         self._fail_apply = fail_apply
         self._fail_apply_message = fail_apply_message
+        self.create_note_calls = 0
 
     def get_card(self, card_id: int) -> FakeCard | None:
         return self._cards.get(card_id)
@@ -61,6 +65,72 @@ class FakeRuntime:
 
     def get_deck_name(self, deck_id: int) -> str:
         return f'Deck {deck_id}'
+
+    def get_model(self, model_name: str) -> str | None:
+        return model_name if model_name == 'Mining Model' else None
+
+    def get_deck_id(self, deck_name: str) -> int | None:
+        if deck_name == 'Deck 3001':
+            return 3001
+        return None
+
+    def create_note(self, model: str, deck_id: int, note_fields: dict[str, str]) -> int:
+        self.create_note_calls += 1
+        note_id = max([*self._cards.keys(), 1000]) + 100
+        created_card = FakeCard(
+            id=note_id + 1,
+            nid=note_id,
+            did=deck_id,
+            model_name=model,
+            template_ord=0,
+            template_name='Card 1',
+            queue=0,
+            type=0,
+            due=0,
+            ivl=0,
+            reps=0,
+            lapses=0,
+        )
+        self._cards[created_card.id] = created_card
+
+        return note_id
+
+    def get_created_card(self, note_id: int, template_ord: int) -> FakeCard | None:
+        for card in self._cards.values():
+            if card.nid == note_id and card.template_ord == template_ord:
+                return card
+        return None
+
+    def describe_card(self, card_id: int) -> dict[str, object] | None:
+        card = self._cards.get(card_id)
+        if card is None:
+            return None
+
+        review_state = 'new'
+        if card.queue in (1, 3, 4):
+            review_state = 'learning'
+        elif card.queue == 2:
+            review_state = 'review'
+        elif card.queue == -1:
+            review_state = 'suspended'
+        elif card.queue in (-2, -3):
+            review_state = 'buried'
+
+        return {
+            'cardId': card.id,
+            'noteId': card.nid,
+            'deckName': self.get_deck_name(card.did),
+            'modelName': card.model_name,
+            'templateOrd': card.template_ord,
+            'templateName': card.template_name,
+            'reviewState': review_state,
+            'queue': card.queue,
+            'type': card.type,
+            'due': card.due,
+            'interval': card.ivl,
+            'reps': card.reps,
+            'lapses': card.lapses,
+        }
 
 
 class TargetedReviewServiceTests(unittest.TestCase):
@@ -237,6 +307,159 @@ class TargetedReviewServiceTests(unittest.TestCase):
         self.assertFalse(response['success'])
         self.assertEqual(response['error']['code'], 'CARD_NOT_REVIEWABLE')
         self.assertEqual(response['error']['details']['reason'], 'not_due')
+
+    def test_commit_reviews_existing_card(self) -> None:
+        runtime = FakeRuntime(
+            {
+                1001: FakeCard(
+                    id=1001,
+                    nid=2001,
+                    did=3001,
+                    queue=0,
+                    type=0,
+                    due=0,
+                    ivl=0,
+                    reps=0,
+                    lapses=0,
+                )
+            }
+        )
+
+        response = handle_commit_request(
+            {
+                'version': 1,
+                'requestId': 'commit-existing',
+                'term': {
+                    'key': '1/0',
+                    'wordId': 1,
+                    'readingIndex': 0,
+                    'spelling': '猫',
+                    'reading': 'ねこ',
+                },
+                'rating': 'good',
+                'target': {
+                    'kind': 'existing-card',
+                    'cardId': 1001,
+                },
+            },
+            runtime,
+        )
+
+        self.assertTrue(response['success'])
+        self.assertEqual(response['result']['transaction'], 'reviewed-existing')
+        self.assertEqual(response['result']['cardId'], 1001)
+
+    def test_commit_creates_then_reviews_exact_template_card(self) -> None:
+        runtime = FakeRuntime({})
+
+        response = handle_commit_request(
+            {
+                'version': 1,
+                'requestId': 'commit-create',
+                'term': {
+                    'key': '1/0',
+                    'wordId': 1,
+                    'readingIndex': 0,
+                    'spelling': '猫',
+                    'reading': 'ねこ',
+                },
+                'rating': 'again',
+                'target': {
+                    'kind': 'create-and-review',
+                    'writeTarget': {
+                        'deck': 'Deck 3001',
+                        'model': 'Mining Model',
+                        'wordField': 'Expression',
+                        'readingField': 'Reading',
+                        'cardTemplateOrd': 0,
+                    },
+                    'noteFields': {
+                        'Expression': '猫',
+                        'Reading': 'ねこ',
+                        'Sentence': '猫が好きです。',
+                    },
+                    'sentenceFieldCount': 1,
+                },
+            },
+            runtime,
+        )
+
+        self.assertTrue(response['success'])
+        self.assertEqual(response['result']['transaction'], 'created-and-reviewed')
+        self.assertEqual(response['result']['sentenceFieldCount'], 1)
+        self.assertEqual(response['result']['templateOrd'], 0)
+
+    def test_commit_returns_model_not_found(self) -> None:
+        runtime = FakeRuntime({})
+
+        response = handle_commit_request(
+            {
+                'version': 1,
+                'term': {
+                    'key': '1/0',
+                    'wordId': 1,
+                    'readingIndex': 0,
+                    'spelling': '猫',
+                    'reading': 'ねこ',
+                },
+                'rating': 'good',
+                'target': {
+                    'kind': 'create-and-review',
+                    'writeTarget': {
+                        'deck': 'Deck 3001',
+                        'model': 'Missing Model',
+                        'wordField': 'Expression',
+                        'readingField': 'Reading',
+                        'cardTemplateOrd': 0,
+                    },
+                    'noteFields': {
+                        'Expression': '猫',
+                    },
+                    'sentenceFieldCount': 0,
+                },
+            },
+            runtime,
+        )
+
+        self.assertFalse(response['success'])
+        self.assertEqual(response['error']['code'], 'MODEL_NOT_FOUND')
+
+    def test_commit_request_id_is_idempotent_for_create_and_review(self) -> None:
+        runtime = FakeRuntime({})
+        payload = {
+            'version': 1,
+            'requestId': 'commit-idempotent',
+            'term': {
+                'key': '1/0',
+                'wordId': 1,
+                'readingIndex': 0,
+                'spelling': '猫',
+                'reading': 'ねこ',
+            },
+            'rating': 'again',
+            'target': {
+                'kind': 'create-and-review',
+                'writeTarget': {
+                    'deck': 'Deck 3001',
+                    'model': 'Mining Model',
+                    'wordField': 'Expression',
+                    'readingField': 'Reading',
+                    'cardTemplateOrd': 0,
+                },
+                'noteFields': {
+                    'Expression': '猫',
+                    'Reading': 'ねこ',
+                },
+                'sentenceFieldCount': 0,
+            },
+        }
+
+        first_response = handle_commit_request(payload, runtime)
+        second_response = handle_commit_request(payload, runtime)
+
+        self.assertTrue(first_response['success'])
+        self.assertEqual(first_response, second_response)
+        self.assertEqual(runtime.create_note_calls, 1)
 
 
 if __name__ == '__main__':

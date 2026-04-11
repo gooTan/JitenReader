@@ -54,7 +54,7 @@ export class GradeCardCommandHandler extends BackgroundCommandHandler<GradeCardC
     }
 
     try {
-      await reviewBackend.gradeCard(wordId, readingIndex, rating, {
+      const result = await reviewBackend.gradeCard(wordId, readingIndex, rating, {
         requestId: `${wordId}/${readingIndex}:${Date.now()}`,
         requestedBackend: resolvedRequestedBackend,
         targetCardId,
@@ -64,7 +64,11 @@ export class GradeCardCommandHandler extends BackgroundCommandHandler<GradeCardC
 
       return {
         success: true,
-        backend: backendStatus.activeBackend,
+        backend: result.backend ?? backendStatus.activeBackend,
+        reviewMetadata: result.reviewMetadata,
+        targetCardId: result.targetCardId,
+        transaction: result.transaction,
+        sentenceFieldCount: result.sentenceFieldCount,
       };
     } catch (error) {
       if (error instanceof TargetedReviewWriteError) {

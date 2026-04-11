@@ -13,6 +13,7 @@ import { BaseController } from './base-controller';
 export class GradingController extends BaseController {
   private _ankiCreatePathAvailable: boolean;
   private _disableReviews: boolean;
+  private readonly _pendingCards = new Set<string>();
   private _showActions: boolean;
   private _useTwoPointGrading: boolean;
 
@@ -28,8 +29,16 @@ export class GradingController extends BaseController {
     return this._useTwoPointGrading ? ['again', 'good'] : ['again', 'hard', 'good', 'easy'];
   }
 
-  public gradeCard(card: JitenCard, rating: JitenRating): void {
+  public isPending(card: JitenCard): boolean {
+    return this._pendingCards.has(this.getCardKey(card));
+  }
+
+  public gradeCard(card: JitenCard, rating: JitenRating, sentence?: string): void {
     if (!this.gradingEnabled || !this.getGradingActions().includes(rating)) {
+      return;
+    }
+
+    if (this.isPending(card)) {
       return;
     }
 
@@ -42,8 +51,15 @@ export class GradingController extends BaseController {
     const termSnapshot = {
       spelling: card.spelling,
       reading: card.reading,
+      meaning: this.getMeaning(card),
+      frequencyRank: card.frequencyRank,
+      sentence,
     };
     const requestedBackend = card.reviewMetadata.backend;
+    const cardKey = this.getCardKey(card);
+
+    this._pendingCards.add(cardKey);
+    Registry.events.emit('popupStateChanged');
 
     void new GradeCardCommand(
       wordId,
@@ -58,6 +74,10 @@ export class GradingController extends BaseController {
       .then((result) => this.handleGradeResult(card, result, targetCardId))
       .catch((error: Error) => {
         displayToast('error', 'Failed to submit review action.', error.message);
+      })
+      .finally(() => {
+        this._pendingCards.delete(cardKey);
+        Registry.events.emit('popupStateChanged');
       });
   }
 
@@ -91,14 +111,32 @@ export class GradingController extends BaseController {
     }
 
     if (result.backend === 'anki') {
-      const staleMetadata = this.createStaleMetadata(card.reviewMetadata);
       const { wordId, readingIndex } = card;
+
+      if (result.reviewMetadata) {
+        Registry.updateCard(wordId, readingIndex, result.reviewMetadata);
+        displayToast(
+          'success',
+          result.transaction === 'created-and-reviewed'
+            ? 'Added to Anki and applied rating.'
+            : 'Review submitted to Anki.',
+        );
+
+        return;
+      }
+
+      const staleMetadata = this.createStaleMetadata(card.reviewMetadata);
 
       Registry.updateCard(wordId, readingIndex, staleMetadata);
       displayToast('success', 'Review submitted to Anki. Refreshing state...');
 
       try {
-        await new UpdateCardStateCommand(wordId, readingIndex, targetCardId, staleMetadata).call();
+        await new UpdateCardStateCommand(
+          wordId,
+          readingIndex,
+          result.targetCardId ?? targetCardId,
+          staleMetadata,
+        ).call();
       } catch (error) {
         displayToast('error', 'Could not refresh updated Anki state.', (error as Error).message);
       }
@@ -147,5 +185,17 @@ export class GradingController extends BaseController {
     }
 
     return false;
+  }
+
+  private getCardKey(card: JitenCard): string {
+    return `${card.wordId}/${card.readingIndex}`;
+  }
+
+  private getMeaning(card: JitenCard): string {
+    return card.meanings
+      .flatMap((meaning) => meaning.glosses)
+      .map((gloss) => gloss.trim())
+      .filter(Boolean)
+      .join('; ');
   }
 }

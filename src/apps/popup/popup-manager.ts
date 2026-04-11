@@ -72,7 +72,7 @@ export class PopupManager {
     this._keyManager.activate();
     this._miningActions.activate(this._currentHover, sentence);
     this._rotationActions.activate(this._currentHover);
-    this._gradingActions.activate(this._currentHover);
+    this._gradingActions.activate(this._currentHover, sentence);
 
     if (this._showPopupOnHover) {
       this.handlePopup();
@@ -135,7 +135,7 @@ export class PopupManager {
     this._keyManager.activate();
     this._miningActions.activate(this._currentHover, sentence);
     this._rotationActions.activate(this._currentHover);
-    this._gradingActions.activate(this._currentHover);
+    this._gradingActions.activate(this._currentHover, sentence);
 
     this.handlePopup();
   }

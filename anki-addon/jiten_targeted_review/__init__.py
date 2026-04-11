@@ -14,7 +14,9 @@ except ModuleNotFoundError:  # pragma: no cover - unit tests run without Anki ru
 
 from .entrypoint import (
     ACTION_NAME,
+    COMMIT_ACTION_NAME,
     COLLECTION_CREATION_TIME_ACTION_NAME,
+    handle_targeted_review_commit,
     handle_get_collection_creation_time,
     handle_targeted_review_write,
     register_action,
@@ -74,6 +76,31 @@ def _register_action_with_anki_connect() -> bool:
         targeted_review_write_v1.__name__ = ACTION_NAME
         setattr(anki_connect_cls, ACTION_NAME, util.api()(targeted_review_write_v1))
 
+    if not hasattr(anki_connect_cls, COMMIT_ACTION_NAME):
+        def targeted_review_commit_v1(
+            self: Any,
+            version: int = 1,
+            requestId: str | None = None,
+            term: dict[str, Any] | None = None,
+            rating: str | None = None,
+            target: dict[str, Any] | None = None,
+            **_kwargs: Any,
+        ) -> dict[str, Any]:
+            payload: dict[str, Any] = {
+                'version': version,
+                'term': term,
+                'rating': rating,
+                'target': target,
+            }
+
+            if requestId is not None:
+                payload['requestId'] = requestId
+
+            return handle_targeted_review_commit(payload)
+
+        targeted_review_commit_v1.__name__ = COMMIT_ACTION_NAME
+        setattr(anki_connect_cls, COMMIT_ACTION_NAME, util.api()(targeted_review_commit_v1))
+
     if not hasattr(anki_connect_cls, COLLECTION_CREATION_TIME_ACTION_NAME):
         def get_collection_creation_time_v1(
             self: Any,
@@ -110,7 +137,7 @@ def _patch_anki_connect_handler() -> bool:
     def patched_handler(request: dict[str, Any]) -> dict[str, Any]:
         action = request.get('action', '')
 
-        if action != ACTION_NAME:
+        if action not in (ACTION_NAME, COMMIT_ACTION_NAME):
             return original_handler(request)
 
         version = request.get('version', 4)
@@ -125,7 +152,11 @@ def _patch_anki_connect_handler() -> bool:
             if not isinstance(params, dict):
                 raise Exception('params must be an object')
 
-            result = handle_targeted_review_write(params)
+            result = (
+                handle_targeted_review_commit(params)
+                if action == COMMIT_ACTION_NAME
+                else handle_targeted_review_write(params)
+            )
             return web.format_success_reply(version, result)
         except Exception as err:
             return web.format_exception_reply(version, err)
@@ -164,4 +195,10 @@ if QTimer is not None:
 if gui_hooks is not None:
     gui_hooks.profile_did_open.append(lambda: _bootstrap_registration())
 
-__all__ = ['ACTION_NAME', 'handle_targeted_review_write', 'register_action']
+__all__ = [
+    'ACTION_NAME',
+    'COMMIT_ACTION_NAME',
+    'handle_targeted_review_write',
+    'handle_targeted_review_commit',
+    'register_action',
+]

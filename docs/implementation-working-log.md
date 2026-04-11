@@ -1,10 +1,10 @@
 # Implementation Working Log
 
 ## Current Snapshot
-- Current stage: Stage 11 - Implement Action Gating and Blocked-State UX
-- Overall status: Stage 10 foundation remains in place and Stage 11's shared reviewability, blocked-state popup UX, controller/backend validation, and the latest silent-fallback/direct-write safety fixes are now implemented in code; manual/live verification is still needed before the stage can be called fully closed.
-- Active backend behavior: Anki read-side matching still uses merged derived-plus-explicit readonly config, template-ord-based filtering, and explicit `resolutionStatus` / `mappingOutcome` metadata; when Anki is the preferred backend, Stage 11 now preserves Anki-blocked intent instead of silently degrading to Jiten reviewability, and Anki write validation now fails closed unless selected-target legitimacy can be proven from trustworthy metadata.
-- Last updated: 2026-04-09 20:09:59 +10:00
+- Current stage: Stage 12 - Implement Anki New-Card Lifecycle
+- Overall status: Stage 10/11 foundations remain in place and Stage 12's core Anki review-commit flow is now implemented in code across the extension and add-on, including create-path enablement, add-then-rate transactions, shared note-field materialization, and authoritative post-write Anki metadata; manual/live verification is still needed before the stage can be called fully closed.
+- Active backend behavior: Anki read-side matching still uses merged derived-plus-explicit readonly config, template-ord-based filtering, and explicit `resolutionStatus` / `mappingOutcome` metadata; when Anki is the preferred backend, grade actions now flow through `jitenTargetedReviewCommitV1`, mapped selected cards can be reviewed directly, unmapped terms can create-and-review via `ankiMiningConfig`, and the popup now consumes authoritative Anki post-write metadata instead of relying on an immediate refresh guess.
+- Last updated: 2026-04-09 21:26:34 +10:00
 
 ## Architectural Decisions
 ### Decision: Keep Stage 0 output documentation-only
@@ -71,9 +71,9 @@
   - No source/runtime behavior files in `src/` were modified.
 
 ## In Progress
-- Task: Stage 11 action gating and blocked-state UX implementation.
-- Current status: Core Stage 11 gating work is implemented and verified by lint/build, but browser/manual verification for each blocked-state case is still outstanding.
-- Next immediate step: Validate popup and write-path behaviour against real/stubbed Anki states for ambiguous, none/no-create-path, suspended, buried, unavailable, refreshing, and normal selected cases.
+- Task: Stage 12 Anki new-card lifecycle implementation.
+- Current status: Core Stage 12 create-and-review transaction work is implemented and verified by lint/build plus add-on unit tests, but browser/manual verification against a live Anki collection is still outstanding.
+- Next immediate step: Validate mapped-new and unmapped add-then-rate flows end to end in live Anki, including sentence-field population and duplicate-click handling.
 
 ## Open Tasks
 - [x] Trace page parsing and enrichment ownership in content scripts and background worker.
@@ -88,7 +88,7 @@
 
 ## Known Issues / Blockers
 - The path `docs/stages/stage-0-codebase-reconnaissance-and-architecture-map.md` is not present; canonical file is `docs/stages/stage_0_codebase_reconnaissance_and_architecture_map.md`.
-- No active blocker for Stage 11.
+- No active blocker for Stage 12.
 
 ## Verification Status
 - Verified:
@@ -122,15 +122,170 @@
 - Stage 7 and Stage 8A are complete and previously validated.
 - The next model instance should start by reading this log, then:
   - `docs/stage_execution_protocol.md`
-  - `docs/stages/stage_10_complete_anki_read_side_identity.md`
-- Stage 10 is partially complete in code and verified by lint/build, but still needs live/manual verification before closure.
-- Next run should stay in Stage 10 and verify:
-  - derived readonly summary behavior
-  - explicit readonly override behavior
-  - matching against non-zero template ord cards
-  - suspended/buried frontend surfacing
+  - `docs/stages/stage_12_implement_anki_new_card_lifecycle.md`
+- Stage 12 now has a core implementation in code and verified lint/build/add-on unit tests, but still needs live/manual verification before closure.
+- Next run should stay in Stage 12 and verify:
+  - mapped existing Anki `new` card review
+  - unmapped term add-then-rate
+  - sentence and `sentenceSanitized` field population
+  - duplicate-click protection
+  - missing/ambiguous create-target config errors
+  - hidden unsupported controls in Anki mode
 
 ## Run History
+### 2026-04-10 - Start-of-Run (Stage 12 Follow-up: Expose Sentence Attachment Preference)
+- Stage:
+  - Stage 12 - Implement Anki New-Card Lifecycle.
+- Run intent:
+  - Fix the Stage 12 usability gap where sentence-derived Anki note fields are gated by the shared `setSentences` preference, but that preference is not exposed in the normal settings UI.
+- Current implementation state:
+  - Stage 12 create-and-review already carries sentence/context through the popup, background, and note-field materialization layers.
+  - The shared `setSentences` preference exists in configuration and is honoured by both Jiten-side sentence attachment and Anki create-and-review, but it currently defaults to `false` and has no visible settings control.
+- Exact goal of this run:
+  - Expose the shared sentence-attachment preference in the settings UI using the existing configuration binding flow.
+  - Keep the preference shared across Jiten and Anki so Stage 12 continues to honour one user-level sentence-attachment model rather than inventing a backend-specific toggle.
+  - Verify that the settings-page wiring persists the value cleanly and that lint/build still pass.
+- Blockers or prerequisites already recorded:
+  - No active blocker is recorded.
+  - Stage 12 already depends on `setSentences` in code, so this run should stay narrow and avoid changing note-field materialization semantics again.
+- Risks/assumptions carried in:
+  - Assumption: the safest fix is to expose the existing shared preference rather than altering the Stage 12 write path to ignore it.
+  - Risk: placing the checkbox in a confusing part of the settings page could make the shared Jiten/Anki scope unclear; mitigation is to use wording that explicitly mentions both mining and Anki note creation.
+
+### 2026-04-09 - Start-of-Run (Stage 12 Follow-up: Close Review Audit Gaps)
+- Stage:
+  - Stage 12 - Implement Anki New-Card Lifecycle.
+- Run intent:
+  - Fix the Stage 12 review findings that remain inside scope:
+    - unsupported Jiten-only popup keybind actions still firing in Anki mode
+    - post-commit Anki state mapping relying on uninitialized scheduling context
+    - missing backend-side idempotency for commit retries
+    - Anki sentence field materialization ignoring the shared `setSentences` preference
+- Current implementation state:
+  - Stage 12 core create-and-review flow is implemented across the extension and add-on and already passes lint/build plus add-on unit tests.
+  - A follow-up audit identified four real stage-boundary issues that need to be fixed before Stage 12 can be considered robust.
+- Exact goal of this run:
+  - Make Anki-mode unsupported actions unavailable from both visible controls and popup keybind paths.
+  - Ensure post-commit metadata assembly can always derive stable Anki-backed state after a successful commit.
+  - Add request-scoped idempotency to the add-on commit endpoint so retries do not create duplicate notes or duplicate first reviews.
+  - Make sentence-derived Anki field materialization honour `setSentences`.
+- Blockers or prerequisites already recorded:
+  - No active blocker is recorded.
+  - Stage 10 identity and Stage 11 reviewability/gating remain the required foundations and should not be weakened.
+- Risks/assumptions carried in:
+  - Assumption: in-memory add-on idempotency is an acceptable Stage 12 first pass because the stage requires retry safety for the live transaction but does not yet require the stronger failure-recovery guarantees deferred to Stage 13.
+  - Assumption: the safest unsupported-action fix is to stop activating or dispatching Jiten-only popup actions when the current popup card is Anki-backed, rather than trying to special-case the backend inside lower-level deck-action handlers.
+  - Risk: changing post-commit due-state derivation could drift from existing Stage 10/11 scheduling semantics; mitigation is to initialize Anki read context before mapping and keep the same `isCardDue()` owner.
+
+### 2026-04-09 - Completed (Stage 12: Core Anki New-Card Lifecycle Transaction)
+- Completed work:
+  - Replaced the old Anki single-card write path with a Stage 12 review-commit path built around `jitenTargetedReviewCommitV1`.
+  - Enabled the Anki create path once `ankiMiningConfig` is fully deterministic, including an exact single `cardTemplateOrd` requirement for create-and-review.
+  - Added shared Anki write-target normalization and shared note-field materialization for:
+    - `spelling`
+    - `reading`
+    - `meaning`
+    - `isKanji`
+    - `hiragana`
+    - `frequency`
+    - `frequencyStylized`
+    - `sentence`
+    - `sentenceSanitized`
+    - `sound:silence`
+  - Fixed `sentenceSanitized` to use the Stage 12 rule:
+    - trim outer whitespace
+    - collapse internal whitespace to single spaces
+    - resolve to empty string when sentence context is absent
+  - Extended popup grading so it now sends richer term context, including meaning/frequency/sentence data needed for Stage 12 note creation.
+  - Added duplicate-click protection and popup pending-state rerendering for in-flight Anki review actions.
+  - Updated popup behavior in Anki mode so unsupported Jiten-only controls are hidden while the Anki scheduler review flow is active.
+  - Changed Anki grade success handling to consume authoritative post-write review metadata returned by the backend instead of immediately forcing a refresh-first UX.
+  - Implemented the add-on-side Stage 12 commit contract so one backend-owned request can:
+    - review an existing exact card
+    - or create a new note, resolve the exact created card by note id plus template ord, and then apply the requested rating
+  - Added/updated add-on unit tests covering:
+    - existing-card review commit
+    - create-and-review success
+    - missing-model failure
+    - existing Stage 8 write-path behavior
+- Files changed:
+  - `docs/implementation-working-log.md`
+  - `src/shared/jiten/types.ts`
+  - `src/shared/anki/api.types.ts`
+  - `src/shared/anki/create-path-capability.ts`
+  - `src/shared/anki/materialize-note-fields.ts`
+  - `src/shared/anki/targeted-review-commit.ts`
+  - `src/shared/anki/write-target.ts`
+  - `src/shared/messages/background/grade-card.command.types.ts`
+  - `src/shared/messages/types/local.ts`
+  - `src/background-worker/review-backend/review-backend.types.ts`
+  - `src/background-worker/review-backend/jiten-review-backend.ts`
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+  - `src/background-worker/jiten-card-actions/grade-card-command.handler.ts`
+  - `src/apps/popup/actions/grading-actions.ts`
+  - `src/apps/popup/actions/grading-controller.ts`
+  - `src/apps/popup/popup-manager.ts`
+  - `src/apps/popup/popup.ts`
+  - `anki-addon/jiten_targeted_review/contract.py`
+  - `anki-addon/jiten_targeted_review/entrypoint.py`
+  - `anki-addon/jiten_targeted_review/runtime.py`
+  - `anki-addon/jiten_targeted_review/service.py`
+  - `anki-addon/tests/test_service.py`
+  - `anki-addon/tests/test_runtime.py`
+- Architectural decisions made:
+  - Stage 12 create-path eligibility now requires one deterministic Anki write target, including exactly one selected template ord, rather than guessing among multiple possible created cards.
+  - Shared field materialization lives in the extension/shared layer so create-and-review can reuse one template-target mapping implementation instead of duplicating Anki-specific field builders.
+  - The first post-write popup state for Anki now comes from the commit response itself, keeping Anki as the immediate source of truth instead of forcing a refresh-derived approximation.
+  - Duplicate-click protection is enforced in both the popup/controller layer and the Anki backend grade path using request-scoped in-flight guards.
+- Blockers / open issues:
+  - No active implementation blocker.
+  - Live/manual verification is still required for the new endpoint against a real Anki collection and add-on runtime.
+  - The current automated verification does not exercise the real Anki runtime methods used for note creation and template/card resolution.
+  - Running the Python tests updated tracked `__pycache__` files in the add-on tree; they were left untouched after verification.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+  - `py -3 -m unittest tests.test_service` passes from `anki-addon/`.
+  - `py -3 -m unittest tests.test_runtime` passes from `anki-addon/`.
+  - Manual/live verification not yet performed in this run.
+- Next recommended step:
+  - Install/update the add-on in a live Anki profile and verify:
+    - mapped `new` card direct review
+    - unmapped add-then-rate
+    - exact created-card targeting for non-zero template ords
+    - configured sentence and `sentenceSanitized` field population
+    - duplicate-click suppression
+    - missing/ambiguous write-target failures
+    - hidden unsupported popup controls in Anki mode
+- Handoff:
+  - Stage 12 now has a concrete extension-plus-add-on implementation for the core Anki first-review lifecycle.
+  - The next run should stay in Stage 12, read this log plus `docs/stages/stage_12_implement_anki_new_card_lifecycle.md`, and focus on live/manual QA plus any fixes surfaced by real Anki behavior.
+
+### 2026-04-09 - Start-of-Run (Stage 12: Implement Anki New-Card Lifecycle)
+- Stage:
+  - Stage 12 - Implement Anki New-Card Lifecycle.
+- Run intent:
+  - Begin Stage 12 by extending the existing Anki review flow so mapped `new` cards can be rated directly and unmapped Anki-mode terms can use one backend-owned add-then-rate transaction.
+- Current implementation state:
+  - The repo snapshot and latest run history show Stage 11 as the active completed implementation stage, with blocked-state UX, backend-intent preservation, direct-write fail-closed behavior, and authoritative write-time Anki re-resolution already implemented and verified by lint/build.
+  - Manual/live verification is still outstanding for some Stage 11 scenarios, but no active blocker is recorded and the Stage 10/11 identity and reviewability foundations required by Stage 12 are already in place.
+  - Stage 12-specific lifecycle work has not yet been recorded in the log, so this run is the first implementation pass for the Anki new-card transaction model.
+- Exact goal of this run:
+  - Inspect the current Anki write/mining/create plumbing and identify the smallest safe Stage 12 entry points for:
+    - one shared Anki review-commit orchestration path
+    - direct review of mapped `new` Anki cards
+    - add-then-rate for unmapped Anki-mode terms using `ankiMiningConfig`
+    - shared note-field materialization including sentence and `sentenceSanitized`
+    - authoritative post-write Anki identity/state return
+- Blockers or prerequisites already recorded:
+  - Stage 10 remains the owner of read-side Anki identity and selected-target facts.
+  - Stage 11 remains the owner of blocked-state gating and invalid-action suppression.
+  - No active implementation blocker is currently recorded in the working log.
+- Risks/assumptions carried in:
+  - Assumption: the safest Stage 12 path is to reuse the existing popup sentence/context plumbing, backend selector, and mining configuration structures rather than creating a second popup-only Anki creation flow.
+  - Assumption: Stage 12 will likely require extending the Anki add-on/local contract and shared command/result types, but the transaction should stay backend-owned and request-scoped.
+  - Risk: existing mining/create helpers may be partially Jiten-shaped, so note-field materialization may need to be extracted into a shared helper without accidentally broadening scope into future-stage recovery work.
+
 ### 2026-04-09 - Start-of-Run (Stage 11 Follow-up: Preserve Backend Intent For Stale Anki Actions)
 - Stage:
   - Stage 11 - Implement Action Gating and Blocked-State UX.
@@ -4236,3 +4391,60 @@ pm run build passes.
   - Reproduce the suspended/buried case with debug mode enabled and compare `ReviewDebug Popup.adjustGradingButtons`, `ReviewDebug Registry.updateCard`, and `ReviewDebug GradingController.canSubmitGrade` log lines for the same `wordId/readingIndex`.
 - Handoff:
   - The trace points are now in place; the next run should capture the three `ReviewDebug` log events during one bad popup session and use the metadata drift, if any, to identify whether this is a rerender issue or a read-model inconsistency.
+
+### 2026-04-09 - Completed (Stage 12 Follow-up: Close Review Audit Gaps)
+- Completed work:
+  - Closed the Stage 12 popup-action gap by making Anki-backed popup action handlers refuse activation and execution for unsupported Jiten-only mining and rotation shortcuts, not just hiding the buttons.
+  - Hardened Anki post-commit result mapping so a successful create-and-review or existing-card review no longer fails if read-context day data is unavailable when deriving `dueState`; the backend now falls back to review-state snapshot tags.
+  - Implemented `requestId` idempotency in the Anki add-on commit endpoint so duplicate retries reuse the first completed response instead of creating duplicate notes, and duplicate in-flight requests now wait for the original transaction to finish.
+  - Wired Stage 12 sentence-field creation through the existing `setSentences` preference so Anki note creation only materializes sentence-derived fields when sentence attachment is enabled.
+  - Updated the add-on bootstrap shim to register and route the new `jitenTargetedReviewCommitV1` action alongside the legacy targeted-review action so Stage 12 commit flow works in the packaged add-on entrypoint path too.
+  - Added a regression test covering repeated create-and-review commits with the same `requestId`.
+- Files changed:
+  - `src/apps/popup/actions/mining-actions.ts`
+  - `src/apps/popup/actions/rotation-actions.ts`
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+  - `src/shared/anki/materialize-note-fields.ts`
+  - `anki-addon/jiten_targeted_review/__init__.py`
+  - `anki-addon/jiten_targeted_review/service.py`
+  - `anki-addon/tests/test_service.py`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Enforced Stage 12 unsupported-action behaviour at the popup action/controller layer so keyboard paths and visual controls follow the same Anki-mode constraints.
+  - Treated authoritative commit responses as the source of truth for post-write metadata, but allowed a safe fallback from queue/review-state snapshot data when collection-day readiness cannot be established immediately after commit.
+  - Implemented Stage 12 idempotency in-memory inside the Anki add-on service using request-scoped caches and in-flight events, which covers browser retry/duplicate-submit behaviour without expanding this stage into persistent cross-process recovery work.
+  - Reused the existing `setSentences` configuration as the single toggle for sentence-derived Anki note fields instead of introducing a new Anki-specific preference.
+- Blockers / open issues:
+  - No active code blocker remains within Stage 12 scope from the audited findings.
+  - Manual live verification with a real Anki session is still recommended for create-and-review retries, sentence-field suppression, and keyboard shortcut suppression in popup Anki mode.
+  - Running the Python tests still touches tracked `__pycache__` files under `anki-addon/`; those generated file changes were not part of this fix set.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+  - `py -3 -m unittest tests.test_service` passes.
+  - `py -3 -m unittest tests.test_runtime` passes.
+- Next recommended step:
+  - Do a live Stage 12 Anki QA pass covering: create-and-review from an unmapped term, retrying the same click/request path, `setSentences` off/on behavior, and confirming unsupported popup shortcuts remain inert in Anki mode.
+- Handoff:
+  - The four recorded Stage 12 audit findings are now fixed in code and covered by local verification; the next run should stay focused on live Anki validation and only reopen Stage 12 if runtime behaviour still differs from the audited expectations.
+
+### 2026-04-10 - Completed (Stage 12 Follow-up: Expose Sentence Attachment Preference)
+- Completed work:
+  - Exposed the shared `setSentences` preference in the visible settings UI so users can enable sentence/context attachment for both Jiten-side mining and Stage 12 Anki create-and-review note creation.
+  - Added settings copy that explains the shared behaviour and makes it clear that the toggle affects parsed sentence reuse when available.
+- Files changed:
+  - `src/views/settings.html`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Reused the existing shared `setSentences` configuration key instead of introducing a separate Anki-only sentence toggle, preserving the Stage 12 requirement that Anki and Jiten honour one user-level sentence-attachment model.
+  - Exposed the preference in the general integration/settings area rather than inside a backend-specific helper because the underlying setting already controls both Jiten-side mining and Anki note creation.
+- Blockers / open issues:
+  - No active blocker remains for this specific Stage 12 gap.
+  - Manual UI verification is still recommended to confirm the new checkbox persists correctly and that enabling it causes create-and-review notes to receive the configured sentence fields in a live Anki session.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Reload the extension settings page, enable the new sentence-attachment checkbox, and rerun the live Stage 12 create-and-review test to confirm `sentence` / `sentenceSanitized` fields are now populated as configured.
+- Handoff:
+  - The hidden `setSentences` dependency is now user-accessible through settings, so the next Stage 12 QA pass should focus on live behavior rather than configuration spelunking.

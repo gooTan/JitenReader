@@ -19,6 +19,35 @@ type TargetedReviewWriteRequest = {
   cardId: number;
   rating: TargetedReviewWriteRating;
 };
+type TargetedReviewCommitRequest = {
+  version: 1;
+  requestId?: string;
+  term: {
+    key: string;
+    wordId: number;
+    readingIndex: number;
+    spelling: string;
+    reading: string;
+  };
+  rating: TargetedReviewWriteRating;
+  target:
+    | {
+        kind: 'existing-card';
+        cardId: number;
+      }
+    | {
+        kind: 'create-and-review';
+        writeTarget: {
+          deck: string;
+          model: string;
+          wordField: string;
+          readingField: string;
+          cardTemplateOrd: number;
+        };
+        noteFields: Record<string, string>;
+        sentenceFieldCount: number;
+      };
+};
 
 type TargetedReviewWriteSuccess = {
   success: true;
@@ -60,6 +89,56 @@ type TargetedReviewWriteError = {
 };
 
 export type TargetedReviewWriteResponse = TargetedReviewWriteSuccess | TargetedReviewWriteError;
+export type TargetedReviewCommitResponse =
+  | {
+      success: true;
+      version: 1;
+      requestId?: string;
+      result: {
+        transaction: 'reviewed-existing' | 'created-and-reviewed';
+        cardId: number;
+        noteId: number;
+        deckName: string;
+        modelName: string;
+        templateOrd: number;
+        templateName?: string;
+        rating: TargetedReviewWriteRating;
+        ease: 1 | 2 | 3 | 4;
+        reviewState: 'new' | 'learning' | 'review' | 'suspended' | 'buried' | 'unknown';
+        queue: number;
+        type: number;
+        due: number;
+        interval: number;
+        reps: number;
+        lapses: number;
+        sentenceFieldCount: number;
+      };
+    }
+  | {
+      success: false;
+      version: 1;
+      requestId?: string;
+      error: {
+        code:
+          | 'INVALID_REQUEST'
+          | 'UNSUPPORTED_VERSION'
+          | 'INVALID_TARGET'
+          | 'INVALID_CARD_ID'
+          | 'INVALID_RATING'
+          | 'CARD_NOT_FOUND'
+          | 'CARD_NOT_REVIEWABLE'
+          | 'WRITE_TARGET_INVALID'
+          | 'WRITE_TARGET_AMBIGUOUS'
+          | 'MODEL_NOT_FOUND'
+          | 'DECK_NOT_FOUND'
+          | 'NOTE_CREATE_FAILED'
+          | 'CREATED_CARD_NOT_FOUND'
+          | 'APPLY_FAILED'
+          | 'INTERNAL_ERROR';
+        message: string;
+        details?: Record<string, unknown>;
+      };
+    };
 
 export type AnkiNoteInfo = {
   noteId: number;
@@ -109,4 +188,5 @@ export type AnkiEndpoints = {
   getIntervals: [GetIntervalsRequest, number[]];
   multi: [MultiRequest, unknown[]];
   jitenTargetedReviewWriteV1: [TargetedReviewWriteRequest, TargetedReviewWriteResponse];
+  jitenTargetedReviewCommitV1: [TargetedReviewCommitRequest, TargetedReviewCommitResponse];
 };

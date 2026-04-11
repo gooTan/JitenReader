@@ -41,6 +41,12 @@ class _FakeCol:
             raise self._get_card_error
         return self._card
 
+    def new_note(self, _model: object) -> object:
+        return SimpleNamespace(id=4321, nid=4321, __setitem__=lambda *_args: None)
+
+    def add_note(self, _note: object, _deck_id: int) -> None:
+        return None
+
 
 class RuntimeTests(unittest.TestCase):
     def test_get_card_returns_none_when_db_says_missing(self) -> None:
@@ -85,6 +91,12 @@ class RuntimeTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, 'Collection creation time is unavailable'):
             runtime.get_collection_creation_time()
+
+    def test_get_model_returns_none_when_models_manager_missing(self) -> None:
+        mw = SimpleNamespace(col=SimpleNamespace(db=_FakeDb(scalar_result=1)))
+        runtime = AnkiCollectionRuntime(mw)
+
+        self.assertIsNone(runtime.get_model('Mining Model'))
 
 
 if __name__ == '__main__':

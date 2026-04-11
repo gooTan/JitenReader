@@ -39,6 +39,13 @@ export class MiningActions {
   public activate(context: HTMLElement, sentence?: string): void {
     this._card = Registry.getCardFromElement(context);
     this._sentence = sentence;
+
+    if (this.isUnavailableInAnkiMode()) {
+      this._keyManager.deactivate();
+
+      return;
+    }
+
     this._keyManager.activate();
   }
 
@@ -50,7 +57,7 @@ export class MiningActions {
   }
 
   private addToDeck(key: 'mining' | 'blacklist' | 'neverForget' | 'suspend'): void {
-    if (!this._card) {
+    if (!this._card || this.isUnavailableInAnkiMode()) {
       return;
     }
 
@@ -61,7 +68,7 @@ export class MiningActions {
   }
 
   private cycleMasterBlacklist(): void {
-    if (!this._card) {
+    if (!this._card || this.isUnavailableInAnkiMode()) {
       return;
     }
 
@@ -169,5 +176,9 @@ export class MiningActions {
 
   private getStateTags(card: JitenCard): JitenCardState[] {
     return card.reviewMetadata?.stateTags ?? card.cardState;
+  }
+
+  private isUnavailableInAnkiMode(): boolean {
+    return this._card?.reviewMetadata.backend === 'anki';
   }
 }

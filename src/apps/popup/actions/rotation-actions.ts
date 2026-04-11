@@ -37,6 +37,13 @@ export class RotationActions {
 
   public activate(context: HTMLElement): void {
     this._card = Registry.getCardFromElement(context);
+
+    if (this.isUnavailableInAnkiMode()) {
+      this._keyManager.deactivate();
+
+      return;
+    }
+
     this._keyManager.activate();
   }
 
@@ -46,10 +53,14 @@ export class RotationActions {
   }
 
   private rotateFlags(forward: boolean): void {
-    if (!this._card) {
+    if (!this._card || this.isUnavailableInAnkiMode()) {
       return;
     }
 
     this._controller.rotate(this._card, forward ? 1 : -1);
+  }
+
+  private isUnavailableInAnkiMode(): boolean {
+    return this._card?.reviewMetadata.backend === 'anki';
   }
 }

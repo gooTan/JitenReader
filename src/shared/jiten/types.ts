@@ -78,6 +78,9 @@ export type ReviewTargetCandidateSummary = {
 export type ReviewTermSnapshot = {
   spelling: string;
   reading: string;
+  meaning: string;
+  frequencyRank: number;
+  sentence?: string;
 };
 
 export type ReviewResolutionDiagnostics = {
