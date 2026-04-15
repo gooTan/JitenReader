@@ -719,7 +719,7 @@ export class AnkiReviewBackend implements ReviewBackend {
         due,
       );
     } catch {
-      stateTags = this.getStateTagsFromCommitSnapshot(response.result.reviewState);
+      stateTags = this.getStateTagsFromCommitSnapshot(response.result);
     }
 
     const reviewMetadata = createReviewMetadata({
