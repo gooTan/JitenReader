@@ -44,10 +44,26 @@ const ANKI_FIELD_TEMPLATE_NAMES: readonly AnkiFieldTemplateName[] = [
 
 const ANKI_FIELD_TEMPLATE_NAME_SET = new Set<AnkiFieldTemplateName>(ANKI_FIELD_TEMPLATE_NAMES);
 
+/**
+ * Checks whether a string is a recognized Anki field template name.
+ *
+ * @param template - The template name to test
+ * @returns `true` if `template` matches a known `AnkiFieldTemplateName`, `false` otherwise
+ */
 function isAnkiFieldTemplateName(template: string): template is AnkiFieldTemplateName {
   return ANKI_FIELD_TEMPLATE_NAME_SET.has(template as AnkiFieldTemplateName);
 }
 
+/**
+ * Normalize and validate a DeckConfiguration into a resolved Anki write target or a specific failure reason.
+ *
+ * Trims core string fields, filters and normalizes template targets and card template ordinals, then checks
+ * required values and uniqueness constraints to determine availability.
+ *
+ * @param miningConfig - The deck configuration to normalize and validate
+ * @returns `{ available: true; target: NormalizedAnkiWriteTarget }` when a single valid write target is produced;
+ * otherwise `{ available: false; reason: AnkiWriteTargetIssueCode }` indicating why resolution failed
+ */
 export function ResolveAnkiWriteTarget(
   miningConfig: DeckConfiguration,
 ): ResolveAnkiWriteTargetResult {

@@ -37,11 +37,35 @@ class _FakeCol:
         self.created = created
 
     def get_card(self, _card_id: int) -> object | None:
+        """
+        Return the preconfigured fake card or raise a preconfigured error.
+        
+        Parameters:
+            _card_id (int): Card identifier requested (ignored by this test double).
+        
+        Returns:
+            object | None: The fake card object previously set, or `None` if no card is configured.
+        
+        Raises:
+            Exception: The exception object previously configured to simulate get_card failures.
+        """
         if self._get_card_error is not None:
             raise self._get_card_error
         return self._card
 
     def new_note(self, _model: object) -> object:
+        """
+        Create and return a fake note object for tests.
+        
+        The returned object behaves like a dict (supports item assignment) and exposes attributes
+        `id` and `nid` both set to 4321.
+        
+        Parameters:
+            _model (object): Ignored; accepted for API compatibility with the real `new_note` method.
+        
+        Returns:
+            object: A dict-like fake note with `id` and `nid` attributes set to 4321.
+        """
         class _FakeNote(dict):
             def __init__(self) -> None:
                 super().__init__()
@@ -51,6 +75,11 @@ class _FakeCol:
         return _FakeNote()
 
     def add_note(self, _note: object, _deck_id: int) -> None:
+        """
+        No-op placeholder that simulates adding a note to a deck in the fake collection.
+        
+        This method intentionally performs no action; it exists so tests can call the collection API without side effects.
+        """
         return None
 
 

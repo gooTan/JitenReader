@@ -45,6 +45,14 @@ def _find_anki_connect_module() -> ModuleType | None:
 
 
 def _register_action_with_anki_connect() -> bool:
+    """
+    Ensure the AnkiConnect module exposes targeted-review and collection-creation-time actions, registering v1-style API wrappers that forward requests to local handlers when those actions are absent.
+    
+    This function searches for a loaded AnkiConnect-containing module and, if found, installs the following actions on its AnkiConnect class when they are not already present: ACTION_NAME (write), COMMIT_ACTION_NAME (commit), and COLLECTION_CREATION_TIME_ACTION_NAME. Each installed action is wrapped with the module's `util.api()` decorator and forwards its payload to the corresponding local handler.
+    
+    Returns:
+        bool: `True` if an AnkiConnect module was found and registration was attempted, `False` if no suitable AnkiConnect module was found.
+    """
     module = _find_anki_connect_module()
 
     if module is None:
@@ -86,6 +94,19 @@ def _register_action_with_anki_connect() -> bool:
             target: dict[str, Any] | None = None,
             **_kwargs: Any,
         ) -> dict[str, Any]:
+            """
+            Handle a targeted-review commit request by forwarding the provided payload to the internal commit handler.
+            
+            Parameters:
+                version (int): API version number to include in the payload.
+                requestId (str | None): Optional client-provided identifier for the request.
+                term (dict[str, Any] | None): Term data describing the item being committed (structure depends on caller).
+                rating (str | None): Rating value associated with the commit (e.g., user-assigned rating).
+                target (dict[str, Any] | None): Target specification for the commit (structure depends on caller).
+            
+            Returns:
+                dict[str, Any]: Result object returned by the targeted-review commit handler.
+            """
             payload: dict[str, Any] = {
                 'version': version,
                 'term': term,
@@ -106,6 +127,12 @@ def _register_action_with_anki_connect() -> bool:
             self: Any,
             **_kwargs: Any,
         ) -> int:
+            """
+            Retrieve the collection's creation time.
+            
+            Returns:
+                int: Collection creation time as a Unix timestamp in seconds.
+            """
             return handle_get_collection_creation_time()
 
         get_collection_creation_time_v1.__name__ = COLLECTION_CREATION_TIME_ACTION_NAME
@@ -115,6 +142,14 @@ def _register_action_with_anki_connect() -> bool:
 
 
 def _patch_anki_connect_handler() -> bool:
+    """
+    Patch AnkiConnect's request handler to route targeted-review actions to the local handlers and mark the instance as patched.
+    
+    This replaces the AnkiConnect instance's handler (and its server.handler if present) with a wrapper that intercepts targeted-review actions and forwards them to local handlers, and sets a flag on the instance to avoid re-patching.
+    
+    Returns:
+        bool: `True` if the AnkiConnect handler was found and patched (or was already patched), `False` if required AnkiConnect components were not available.
+    """
     module = _find_anki_connect_module()
 
     if module is None:
@@ -135,6 +170,21 @@ def _patch_anki_connect_handler() -> bool:
         return False
 
     def patched_handler(request: dict[str, Any]) -> dict[str, Any]:
+        """
+        Handle an AnkiConnect request for targeted-review actions and delegate to the appropriate local handler.
+        
+        Parameters:
+            request (dict[str, Any]): The incoming request payload. Expected keys include:
+                - 'action': the AnkiConnect action name (used to choose the handler).
+                - 'version': API version number (defaults to 4 if absent).
+                - 'params': an object forwarded to the targeted-review handler.
+                - 'key' (optional): API key validated against module.util.setting('apiKey').
+        
+        Returns:
+            dict[str, Any]: A web-formatted AnkiConnect reply produced by `web.format_success_reply`
+            when the handler completes successfully, or `web.format_exception_reply` when an
+            error occurs (for example, invalid API key or malformed params).
+        """
         action = request.get('action', '')
 
         if action not in (ACTION_NAME, COMMIT_ACTION_NAME):

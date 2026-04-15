@@ -52,21 +52,76 @@ class AnkiRuntime(Protocol):
         pass
 
     def get_deck_name(self, deck_id: int) -> str:
+        """
+        Get the display name for the deck with the given ID.
+        
+        Returns:
+            The deck's display name.
+        """
         pass
 
     def get_model(self, model_name: str) -> Any | None:
+        """
+        Retrieve the model object for the given model name.
+        
+        Parameters:
+            model_name (str): The name of the model to look up.
+        
+        Returns:
+            The model object if found, or None if no model with that name exists.
+        """
         pass
 
     def get_deck_id(self, deck_name: str) -> int | None:
+        """
+        Resolve a deck name to its internal numeric deck ID.
+        
+        Parameters:
+            deck_name (str): The user-visible deck name to look up.
+        
+        Returns:
+            int: The numeric deck ID if the deck exists.
+            None: If no deck with the given name is found.
+        """
         pass
 
     def create_note(self, model: Any, deck_id: int, note_fields: dict[str, str]) -> int:
+        """
+        Create a new note in the specified deck using the given model and field values.
+        
+        Parameters:
+            model (Any): The Anki model object (note type) to use for the new note.
+            deck_id (int): The integer ID of the deck where the note should be created.
+            note_fields (dict[str, str]): Mapping of field names to their string values for the new note.
+        
+        Returns:
+            int: The ID of the newly created note.
+        """
         pass
 
     def get_created_card(self, note_id: int, template_ord: int) -> CardProtocol | None:
+        """
+        Finds the card created for a given note and template ordinal.
+        
+        Parameters:
+            note_id (int): The note's database identifier.
+            template_ord (int): Zero-based ordinal of the card template within the note's model.
+        
+        Returns:
+            CardProtocol | None: The card matching the note and template ordinal, or `None` if no such card exists.
+        """
         pass
 
     def describe_card(self, card_id: int) -> dict[str, Any] | None:
+        """
+        Fetch detailed scheduling and template metadata for a card by its internal card id.
+        
+        Parameters:
+            card_id (int): The Anki internal card id to describe.
+        
+        Returns:
+            dict[str, Any] | None: A dictionary with the card's scheduling and template metadata (for example: deck/model/template identifiers and names, `queue`, `type`, `due`, `interval`, `reps`, `lapses`, and related fields) if the card exists; `None` if the card cannot be found.
+        """
         pass
 
 
@@ -145,6 +200,16 @@ def _extract_error_version(payload: Any) -> int:
 
 
 def handle_request(payload: Any, runtime: AnkiRuntime) -> dict[str, Any]:
+    """
+    Parse and apply a targeted-review request payload using the given runtime and return the resulting response.
+    
+    Parameters:
+        payload (Any): The raw incoming request payload (typically a dict) to be parsed as a targeted-review request.
+        runtime (AnkiRuntime): Runtime implementation used to fetch and modify Anki state required by the request.
+    
+    Returns:
+        dict[str, Any]: A response dictionary that always includes `version` and may include `requestId`. On success the response contains a `result`. If the payload fails validation the response contains an `error` with `code`, `message`, and `details` derived from the validation error. On unexpected failures the response contains an `error` with code `INTERNAL_ERROR` and `details` including the exception text.
+    """
     request_id = payload.get('requestId') if isinstance(payload, dict) else None
     version = _extract_error_version(payload)
 
@@ -166,6 +231,18 @@ def handle_request(payload: Any, runtime: AnkiRuntime) -> dict[str, Any]:
 
 
 def handle_commit_request(payload: Any, runtime: AnkiRuntime) -> dict[str, Any]:
+    """
+    Handle a targeted review commit request, applying the commit (which may create notes and answer cards) and returning a success or error response.
+    
+    When the incoming payload contains a non-empty string `requestId`, the handler will deduplicate concurrent identical commit requests and cache the resulting response keyed by that `requestId` so subsequent requests can reuse it. Validation errors produce an error response populated from the validation failure; unexpected exceptions produce an `INTERNAL_ERROR` response.
+    
+    Parameters:
+        payload (Any): The raw request payload received from the client; typically a dict representing a TargetedReviewCommitRequest.
+        runtime (AnkiRuntime): Runtime interface used to resolve models/decks, create notes, fetch and answer cards, and describe cards.
+    
+    Returns:
+        dict[str, Any]: A response payload representing either a success_response with result data or an error_response containing `version`, optional `requestId`, and an `ErrorPayload`.
+    """
     request_id = payload.get('requestId') if isinstance(payload, dict) else None
     version = _extract_error_version(payload)
     cache_key = request_id if isinstance(request_id, str) and request_id else None
@@ -221,6 +298,21 @@ def handle_commit_request(payload: Any, runtime: AnkiRuntime) -> dict[str, Any]:
 
 
 def _apply_targeted_review(request: TargetedReviewRequest, runtime: AnkiRuntime) -> dict[str, Any]:
+    """
+    Apply the requested rating to the targeted existing card and produce a protocol response.
+    
+    Attempts to locate the card, verify it is reviewable, apply the mapped ease value, reload the card,
+    and return a success response containing the updated card snapshot. On failure returns an error
+    response indicating the problem.
+    
+    Returns:
+        dict[str, Any]: A protocol response dictionary. On success this is a `success_response` whose
+        `result` contains the updated card snapshot. On failure this is an `error_response` with one
+        of these error codes and associated details:
+          - `CARD_NOT_FOUND`: the specified card id does not exist.
+          - `CARD_NOT_REVIEWABLE`: the card is not reviewable (includes a `reason` detail).
+          - `APPLY_FAILED`: applying the rating or reloading the card failed (includes error details).
+    """
     target_card = runtime.get_card(request.card_id)
     if target_card is None:
         return error_response(
@@ -294,6 +386,12 @@ def _apply_targeted_review_commit(
     request: TargetedReviewCommitRequest,
     runtime: AnkiRuntime,
 ) -> dict[str, Any]:
+    """
+    Apply a targeted review commit: if the request targets an existing card, answer that card; otherwise create the note/card and answer the created card.
+    
+    Returns:
+        A response dictionary representing either a success_response with the commit result or an error_response. If the request targets an existing card that cannot be found, the response will be an error_response with code 'CARD_NOT_FOUND' and details containing the missing `cardId`.
+    """
     if isinstance(request.target, ExistingCardTarget):
         target_card = runtime.get_card(request.target.card_id)
         if target_card is None:
@@ -323,6 +421,17 @@ def _create_answer_and_snapshot(
     runtime: AnkiRuntime,
     target: CreateAndReviewTarget,
 ) -> dict[str, Any]:
+    """
+    Create an Anki note from the given creation target, resolve the created card, answer that card with the requested rating, and return the resulting commit response.
+    
+    If the referenced model or deck cannot be resolved, or note creation or card resolution fails, returns an error_response with one of these codes: `MODEL_NOT_FOUND`, `DECK_NOT_FOUND`, `NOTE_CREATE_FAILED`, or `CREATED_CARD_NOT_FOUND`. On success, delegates to _answer_and_snapshot to produce the final success_response.
+    
+    Parameters:
+        target (CreateAndReviewTarget): Creation details including `model`, `deck`, `note_fields`, `card_template_ord`, and `sentence_field_count`.
+    
+    Returns:
+        dict[str, Any]: A response dictionary representing either an error_response (with error payload and details) or a success_response containing the created-and-reviewed result.
+    """
     model = runtime.get_model(target.model)
     if model is None:
         return error_response(
@@ -388,6 +497,26 @@ def _answer_and_snapshot(
     transaction: str,
     sentence_field_count: int,
 ) -> dict[str, Any]:
+    """
+    Apply the given rating to the specified card and return a response containing the post-review snapshot or a structured error.
+    
+    Parameters:
+        request (TargetedReviewCommitRequest): The commit request carrying version, request_id, and rating.
+        runtime (AnkiRuntime): Runtime used to apply the answer and to describe the card after the review.
+        card (CardProtocol): The target card to answer.
+        transaction (str): An identifier describing the transaction type written into the result (`'reviewed-existing'` or `'created-and-reviewed'`).
+        sentence_field_count (int): Number of sentence fields from the creation target to include in the result.
+    
+    Returns:
+        dict[str, Any]: On success, a success response whose `result` contains:
+            - `transaction`, `cardId`, `noteId`, `deckName`, `modelName`, `templateOrd`, optional `templateName`
+            - `rating`, `ease`
+            - scheduling fields: `reviewState`, `queue`, `type`, `due`, `interval`, `reps`, `lapses`
+            - `sentenceFieldCount`
+        On failure, an error response with one of:
+            - `CARD_NOT_REVIEWABLE` when the card is not reviewable before answering or when the scheduler reports a non-reviewable reason after attempting to answer.
+            - `APPLY_FAILED` when applying the rating fails for other reasons or when the post-answer card description cannot be loaded.
+    """
     reviewability = _reviewability_for_queue(int(card.queue))
     if not reviewability.reviewable:
         return error_response(
@@ -465,6 +594,15 @@ def _answer_and_snapshot(
 
 
 def _get_cached_commit_response(request_id: str) -> dict[str, Any] | None:
+    """
+    Retrieve a cached commit response for the given request ID and mark it as most-recently-used.
+    
+    Parameters:
+        request_id (str): The cache key identifying a commit request.
+    
+    Returns:
+        dict[str, Any] | None: A deep copy of the cached response for request_id if present, otherwise `None`.
+    """
     with _commit_cache_lock:
         cached = _commit_response_cache.get(request_id)
         if cached is None:
@@ -476,6 +614,15 @@ def _get_cached_commit_response(request_id: str) -> dict[str, Any] | None:
 
 
 def _register_commit_request(request_id: str) -> tuple[bool, Event]:
+    """
+    Register an inflight commit request for the given request_id, creating and storing a new Event if one does not already exist.
+    
+    Parameters:
+        request_id (str): Identifier for the commit request used to deduplicate concurrent work.
+    
+    Returns:
+        tuple[bool, Event]: A pair where the boolean is `True` when a new Event was created and the caller is responsible for performing the work; `False` when an existing Event was found. The returned Event may be waited on by callers that did not create it.
+    """
     with _commit_cache_lock:
         existing_event = _commit_inflight_events.get(request_id)
         if existing_event is not None:
@@ -488,6 +635,13 @@ def _register_commit_request(request_id: str) -> tuple[bool, Event]:
 
 
 def _store_cached_commit_response(request_id: str, response: dict[str, Any]) -> None:
+    """
+    Store a deep-copied commit response in the LRU commit-response cache and evict oldest entries when the cache exceeds its maximum size.
+    
+    Parameters:
+        request_id (str): The requestId key under which to store the response.
+        response (dict[str, Any]): The commit response payload to cache (a deep copy will be stored).
+    """
     with _commit_cache_lock:
         _commit_response_cache[request_id] = deepcopy(response)
         _commit_response_cache.move_to_end(request_id)
@@ -497,6 +651,13 @@ def _store_cached_commit_response(request_id: str, response: dict[str, Any]) -> 
 
 
 def _complete_commit_request(request_id: str) -> None:
+    """
+    Mark a commit request as complete and notify any waiters.
+    
+    Parameters:
+        request_id (str): Identifier of the commit request whose inflight event should be completed.
+            If no inflight event exists for the given id, the function does nothing.
+    """
     with _commit_cache_lock:
         event = _commit_inflight_events.pop(request_id, None)
 
