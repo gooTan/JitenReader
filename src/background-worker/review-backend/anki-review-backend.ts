@@ -754,16 +754,18 @@ export class AnkiReviewBackend implements ReviewBackend {
     };
   }
 
-  private getStateTagsFromCommitSnapshot(reviewState: string): JitenCardState[] {
-    switch (reviewState) {
+  private getStateTagsFromCommitSnapshot(
+    commitResult: Extract<TargetedReviewCommitResponse, { success: true }>['result'],
+  ): JitenCardState[] {
+    switch (commitResult.reviewState) {
       case 'new':
         return [JitenCardState.NEW];
       case 'learning':
         return [JitenCardState.YOUNG];
       case 'review':
-        // Best-effort fallback: the commit snapshot does not include interval
-        // or maturity details here, so approximate review as young.
-        return [JitenCardState.YOUNG];
+        // Use interval from commit result for a more accurate maturity fallback.
+        // A maturity threshold of 21 days is standard in Anki.
+        return commitResult.interval >= 21 ? [JitenCardState.MATURE] : [JitenCardState.YOUNG];
       case 'suspended':
         return [JitenCardState.SUSPENDED];
       case 'buried':
