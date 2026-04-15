@@ -761,6 +761,8 @@ export class AnkiReviewBackend implements ReviewBackend {
       case 'learning':
         return [JitenCardState.YOUNG];
       case 'review':
+        // Best-effort fallback: the commit snapshot does not include interval
+        // or maturity details here, so approximate review as young.
         return [JitenCardState.YOUNG];
       case 'suspended':
         return [JitenCardState.SUSPENDED];

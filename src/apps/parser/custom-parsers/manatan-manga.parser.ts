@@ -37,6 +37,8 @@ export class ManatanMangaParser extends AutomaticParser {
   private _visibilityHandler?: () => void;
 
   public override destroy(): void {
+    this._destroyed = true;
+
     if (this._keydownHandler) {
       document.removeEventListener('keydown', this._keydownHandler);
     }
@@ -71,6 +73,7 @@ export class ManatanMangaParser extends AutomaticParser {
     this._middleClickPassThrough = false;
     this.sendMainWorldPatchControl('uninstall');
     this._textObservers.forEach((obs) => obs.disconnect());
+    this.cancelParse();
     this._textObservers.clear();
     this._debounceTimers.forEach((t) => clearTimeout(t));
     this._debounceTimers.clear();
@@ -283,6 +286,10 @@ export class ManatanMangaParser extends AutomaticParser {
     }
 
     const observer = new MutationObserver((mutations) => {
+      if (this._destroyed) {
+        return;
+      }
+
       const isOverlayChange = mutations.every((m) => {
         if (m.type !== 'childList') {
           return false;
@@ -311,6 +318,10 @@ export class ManatanMangaParser extends AutomaticParser {
       this._debounceTimers.set(
         box,
         setTimeout(() => {
+          if (this._destroyed) {
+            return;
+          }
+
           this._debounceTimers.delete(box);
           this.reparseTextBox(box);
         }, 300),
@@ -327,11 +338,21 @@ export class ManatanMangaParser extends AutomaticParser {
   }
 
   private reparseTextBox(box: HTMLElement): void {
+    if (this._destroyed) {
+      return;
+    }
+
     box.querySelector('.jiten-manatan-overlay')?.remove();
     box.removeAttribute('data-jiten-parsed');
 
     Registry.batchController.dismissNode(box);
     this.registerBox(box);
     Registry.batchController.parseBatches();
+  }
+
+  private cancelParse(): void {
+    this._textObservers.forEach((_observer, box) => {
+      Registry.batchController.dismissNode(box);
+    });
   }
 }

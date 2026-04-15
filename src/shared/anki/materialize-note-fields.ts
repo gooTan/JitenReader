@@ -92,9 +92,15 @@ function hasKanji(value: string): boolean {
 }
 
 function katakanaToHiragana(value: string): string {
-  return value.replace(/[\u30a1-\u30f6]/g, (char) =>
-    String.fromCharCode(char.charCodeAt(0) - 0x60),
-  );
+  return value.replace(/[\u30a1-\u30fa\u30fc]/g, (char) => {
+    const code = char.charCodeAt(0);
+
+    if (code < 0x30a1 || code > 0x30fa) {
+      return char;
+    }
+
+    return String.fromCharCode(code - 0x60);
+  });
 }
 
 function formatFrequency(frequencyRank: number): string {

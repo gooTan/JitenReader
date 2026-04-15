@@ -58,6 +58,35 @@ class AnkiCollectionRuntime:
             return ''
         return str(deck.get('name', ''))
 
+    def get_deck_id(self, deck_name: str) -> int | None:
+        deck_manager = getattr(self._mw.col, 'decks', None)
+
+        if deck_manager is None:
+            return None
+
+        for method_name in ('by_name', 'byName'):
+            method = getattr(deck_manager, method_name, None)
+            if not callable(method):
+                continue
+
+            deck = method(deck_name)
+            if not deck:
+                continue
+
+            if not hasattr(deck, 'get'):
+                continue
+
+            id_val = deck.get('id')
+            if id_val is None:
+                continue
+
+            try:
+                return int(id_val)
+            except (TypeError, ValueError):
+                continue
+
+        return None
+
     def get_collection_creation_time(self) -> int:
         for candidate in (
             self._get_collection_creation_from_db(),
@@ -79,21 +108,6 @@ class AnkiCollectionRuntime:
             method = getattr(model_manager, method_name, None)
             if callable(method):
                 return method(model_name)
-
-        return None
-
-    def get_deck_id(self, deck_name: str) -> int | None:
-        deck_manager = getattr(self._mw.col, 'decks', None)
-
-        if deck_manager is None:
-            return None
-
-        for method_name in ('by_name', 'byName'):
-            method = getattr(deck_manager, method_name, None)
-            if callable(method):
-                deck = method(deck_name)
-                if deck:
-                    return int(deck.get('id'))
 
         return None
 

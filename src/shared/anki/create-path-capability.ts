@@ -1,14 +1,7 @@
 import { DeckConfiguration } from './types';
-import { ResolveAnkiWriteTarget } from './write-target';
+import { AnkiWriteTargetIssueCode, ResolveAnkiWriteTarget } from './write-target';
 
-export type AnkiCreatePathCapabilityReason =
-  | 'ready'
-  | 'missing-deck'
-  | 'missing-model'
-  | 'missing-word-field'
-  | 'missing-template-targets'
-  | 'missing-card-template-ord'
-  | 'ambiguous-card-template-ord';
+export type AnkiCreatePathCapabilityReason = 'ready' | AnkiWriteTargetIssueCode;
 
 export type AnkiCreatePathCapability = {
   configured: boolean;

@@ -42,7 +42,13 @@ class _FakeCol:
         return self._card
 
     def new_note(self, _model: object) -> object:
-        return SimpleNamespace(id=4321, nid=4321, __setitem__=lambda *_args: None)
+        class _FakeNote(dict):
+            def __init__(self) -> None:
+                super().__init__()
+                self.id = 4321
+                self.nid = 4321
+
+        return _FakeNote()
 
     def add_note(self, _note: object, _deck_id: int) -> None:
         return None
@@ -97,6 +103,18 @@ class RuntimeTests(unittest.TestCase):
         runtime = AnkiCollectionRuntime(mw)
 
         self.assertIsNone(runtime.get_model('Mining Model'))
+
+    def test_create_note_supports_item_assignment_and_returns_note_id(self) -> None:
+        mw = SimpleNamespace(col=_FakeCol(db=_FakeDb()))
+        runtime = AnkiCollectionRuntime(mw)
+
+        self.assertEqual(runtime.create_note(SimpleNamespace(), 42, {'front': 'value'}), 4321)
+
+    def test_get_deck_id_returns_none_when_deck_lacks_id(self) -> None:
+        mw = SimpleNamespace(col=SimpleNamespace(decks=SimpleNamespace(by_name=lambda _name: {'name': 'Mining'})))
+        runtime = AnkiCollectionRuntime(mw)
+
+        self.assertIsNone(runtime.get_deck_id('Mining'))
 
 
 if __name__ == '__main__':

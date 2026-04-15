@@ -601,6 +601,10 @@ export class Popup {
     this._gradeButtons.style.display =
       this._grading.showActions && reviewability.allowed && !isPending ? '' : 'none';
 
+    const pendingCopy = reviewability.showAddToAnkiHint
+      ? 'Adding to Anki and applying rating...'
+      : 'Applying rating...';
+
     this._reviewActionStatus.replaceChildren(
       ...(isPending
         ? [
@@ -608,11 +612,7 @@ export class Popup {
               class: ['review-status-copy'],
               children: [
                 createElement('strong', {
-                  innerText:
-                    card.reviewMetadata.backend === 'anki' &&
-                    card.reviewMetadata.mappingOutcome === 'none'
-                      ? 'Adding to Anki and applying rating...'
-                      : 'Applying rating...',
+                  innerText: pendingCopy,
                 }),
               ],
             }),

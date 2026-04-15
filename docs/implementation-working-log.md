@@ -4,7 +4,7 @@
 - Current stage: Stage 12 - Implement Anki New-Card Lifecycle
 - Overall status: Stage 10/11 foundations remain in place and Stage 12's core Anki review-commit flow is now implemented in code across the extension and add-on, including create-path enablement, add-then-rate transactions, shared note-field materialization, and authoritative post-write Anki metadata; manual/live verification is still needed before the stage can be called fully closed.
 - Active backend behavior: Anki read-side matching still uses merged derived-plus-explicit readonly config, template-ord-based filtering, and explicit `resolutionStatus` / `mappingOutcome` metadata; when Anki is the preferred backend, grade actions now flow through `jitenTargetedReviewCommitV1`, mapped selected cards can be reviewed directly, unmapped terms can create-and-review via `ankiMiningConfig`, and the popup now consumes authoritative Anki post-write metadata instead of relying on an immediate refresh guess.
-- Last updated: 2026-04-09 21:26:34 +10:00
+- Last updated: 2026-04-15 21:07:16 +10:00
 
 ## Architectural Decisions
 ### Decision: Keep Stage 0 output documentation-only
@@ -133,6 +133,58 @@
   - hidden unsupported controls in Anki mode
 
 ## Run History
+### 2026-04-15 - Start-of-Run (PR Branch Cleanup: Resolve Remaining Review Findings)
+- Stage:
+  - Stage 12 - Implement Anki New-Card Lifecycle.
+- Run intent:
+  - Patch the submitted PR branch so the remaining live review findings are fixed on the branch tip without merging into `main`.
+- Current implementation state:
+  - The PR branch still contains the older branch-specific teardown and runtime/test helper issues that were already resolved in `main`.
+  - The branch also still carries the older template-validation, popup-copy, settings copy, and review-state fallback-comment wording from the original PR snapshot.
+- Exact goal of this run:
+  - Update only the branch code paths that still exhibit the reported defects.
+  - Keep the branch review contract aligned with the addon/runtime behavior that the PR actually submits.
+- Blockers or prerequisites already recorded:
+  - No blocker is recorded.
+- Risks/assumptions carried in:
+  - Assumption: the PR branch should be made mergeable by fixing the live branch tip, not by merging `main` into it.
+  - Risk: the branch may still have additional stale review comments after this fix pass, so validation should include lint/build/tests before pushing.
+
+### 2026-04-15 - Completed (PR Branch Cleanup: Resolve Remaining Review Findings)
+- Completed work:
+  - Hardened `ManatanMangaParser.destroy()` so it aborts owned parse work before teardown and ignores late reparse callbacks while destruction is in progress.
+  - Fixed `AnkiCollectionRuntime.get_deck_id()` to skip truthy decks without an id and avoid `int(None)`.
+  - Replaced the test helper note stub with a real item-assignable fake note and added regression coverage for `create_note()` and `get_deck_id()`.
+  - Validated Anki template targets before write-target normalization and logged unknown template strings instead of silently forwarding them.
+  - Tightened the katakana-to-hiragana conversion helper so prolonged sound marks and only the directly mappable block are handled correctly.
+  - Swapped the popup pending copy to the canonical `showAddToAnkiHint` flag.
+  - Added the requested fallback comment in `getStateTagsFromCommitSnapshot()` and softened the settings copy to user-facing wording.
+- Files changed:
+  - `anki-addon/jiten_targeted_review/runtime.py`
+  - `anki-addon/tests/test_runtime.py`
+  - `src/apps/parser/custom-parsers/manatan-manga.parser.ts`
+  - `src/apps/popup/popup.ts`
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+  - `src/shared/anki/create-path-capability.ts`
+  - `src/shared/anki/materialize-note-fields.ts`
+  - `src/shared/anki/write-target.ts`
+  - `src/views/settings.html`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Kept the branch fix narrow and branch-specific, rather than importing unrelated newer `main` lifecycle changes into the PR tip.
+  - Used a real fake note object in tests so the regression covers the runtime's item-assignment contract instead of relying on instance-level special methods.
+- Blockers / open issues:
+  - No blocking issues remain from the reviewed branch findings.
+  - The additive `api.types.ts` review comment was not changed because the branch's addon service still emits the existing codes the type currently models.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+  - `py -3 -m unittest tests.test_runtime tests.test_service` passes in `anki-addon/`.
+- Next recommended step:
+  - Push the updated `codex-stage11-stage12` branch so the PR can be re-reviewed against the cleaned tip.
+- Handoff:
+  - The PR branch now has the real remaining issues fixed and is ready for another review pass without merging `main`.
+
 ### 2026-04-10 - Start-of-Run (Stage 12 Follow-up: Expose Sentence Attachment Preference)
 - Stage:
   - Stage 12 - Implement Anki New-Card Lifecycle.
