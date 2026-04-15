@@ -67,6 +67,12 @@ class RequestValidationError(ValueError):
 
 
 def _is_strict_int(value: Any) -> bool:
+    """
+    Check whether a value is an integer excluding booleans.
+    
+    Returns:
+        True if `value` is an `int` but not a `bool`, False otherwise.
+    """
     return isinstance(value, int) and not isinstance(value, bool)
 
 
@@ -74,6 +80,19 @@ def _require_string_mapping(
     payload: Mapping[str, Any],
     field_name: str,
 ) -> Mapping[str, Any]:
+    """
+    Retrieve the value for `field_name` from `payload` and require that it is a mapping.
+    
+    Parameters:
+        payload (Mapping[str, Any]): Source mapping to read from.
+        field_name (str): Key to look up in `payload`.
+    
+    Returns:
+        Mapping[str, Any]: The mapping stored at `payload[field_name]`.
+    
+    Raises:
+        RequestValidationError: If the field is missing or its value is not a mapping. The error uses code `'INVALID_REQUEST'` and message `Field "<field_name>" must be an object.`.
+    """
     value = payload.get(field_name)
 
     if not isinstance(value, Mapping):
@@ -86,6 +105,19 @@ def _require_string_mapping(
 
 
 def _require_string(value: Any, field_name: str) -> str:
+    """
+    Validate that a value is a string and return it.
+    
+    Parameters:
+        value: The value to validate.
+        field_name (str): Field name used in the error message if validation fails.
+    
+    Returns:
+        str: The validated string value.
+    
+    Raises:
+        RequestValidationError: With code "INVALID_REQUEST" and message `Field "<field_name>" must be a string.` when `value` is not a `str`.
+    """
     if not isinstance(value, str):
         raise RequestValidationError(
             'INVALID_REQUEST',
@@ -96,6 +128,25 @@ def _require_string(value: Any, field_name: str) -> str:
 
 
 def parse_request(payload: Any) -> TargetedReviewRequest:
+    """
+    Validate and parse a mapping payload into a TargetedReviewRequest.
+    
+    Parameters:
+        payload (Any): The incoming request payload expected to be a mapping (object) containing keys:
+            - "version": integer equal to SUPPORTED_VERSION
+            - "cardId": positive integer
+            - "rating": string (will be trimmed and lowercased; must be one of VALID_RATINGS)
+            - optional "requestId": string
+    
+    Returns:
+        TargetedReviewRequest: A dataclass containing the validated and normalized request fields
+            (version, card_id, rating, request_id).
+    
+    Raises:
+        RequestValidationError: If the payload is not a mapping, if required fields are missing or of the wrong type,
+            if the version is unsupported, if cardId is not a positive integer, if rating is invalid, or if requestId
+            is present but not a string.
+    """
     if not isinstance(payload, Mapping):
         raise RequestValidationError('INVALID_REQUEST', 'Payload must be an object.')
 
@@ -139,6 +190,23 @@ def parse_request(payload: Any) -> TargetedReviewRequest:
 
 
 def parse_commit_request(payload: Any) -> TargetedReviewCommitRequest:
+    """
+    Parse a raw commit request payload into a validated TargetedReviewCommitRequest.
+    
+    Parameters:
+        payload (Any): The incoming request payload expected to be a mapping with keys like
+            "version", optional "requestId", "rating", "term", and "target".
+    
+    Returns:
+        TargetedReviewCommitRequest: Object containing the validated version, optional request_id,
+        parsed ReviewTerm, normalized rating (lowercased and trimmed), and a parsed target
+        (ExistingCardTarget or CreateAndReviewTarget).
+    
+    Raises:
+        RequestValidationError: If the payload is not an object, the version is unsupported or not
+        an integer, required fields are missing or of the wrong type, ratings are invalid, term
+        fields are invalid, or the target is malformed or has invalid values.
+    """
     if not isinstance(payload, Mapping):
         raise RequestValidationError('INVALID_REQUEST', 'Payload must be an object.')
 
@@ -247,6 +315,19 @@ def parse_commit_request(payload: Any) -> TargetedReviewCommitRequest:
 
 
 def _parse_positive_or_zero_int(value: Any, field_name: str) -> int:
+    """
+    Validate that `value` is a strict integer greater than or equal to zero and return it.
+    
+    Parameters:
+        value (Any): The value to validate as a non-negative integer.
+        field_name (str): The field name used in the error message when validation fails.
+    
+    Returns:
+        int: The validated non-negative integer.
+    
+    Raises:
+        RequestValidationError: With code 'INVALID_REQUEST' if `value` is not a strict int or is negative.
+    """
     if not _is_strict_int(value) or value < 0:
         raise RequestValidationError(
             'INVALID_REQUEST',
@@ -260,6 +341,20 @@ def success_response(
     request: TargetedReviewRequest,
     result: Mapping[str, Any],
 ) -> dict[str, Any]:
+    """
+    Builds a standardized success response payload for a targeted review request.
+    
+    Parameters:
+        request (TargetedReviewRequest): The original validated request; its `version` is included and `request_id` is added as `requestId` when present.
+        result (Mapping[str, Any]): Result data to include in the response; converted to a plain dict.
+    
+    Returns:
+        dict[str, Any]: Response object with keys:
+            - `success`: True
+            - `version`: the request version
+            - `result`: the provided result as a dict
+            - `requestId` (optional): included when `request.request_id` is not None
+    """
     response: dict[str, Any] = {
         'success': True,
         'version': request.version,

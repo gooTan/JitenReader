@@ -33,12 +33,29 @@ class FakeRuntime:
         fail_apply: bool = False,
         fail_apply_message: str = 'scheduler error',
     ):
+        """
+        Initialize the FakeRuntime used by tests with a set of cards and optional failure simulation.
+        
+        Parameters:
+            cards (dict[int, FakeCard]): Mapping of card id to FakeCard instances to populate the runtime.
+            fail_apply (bool): If True, calls that apply answers will raise a RuntimeError with fail_apply_message.
+            fail_apply_message (str): Message used when raising the simulated apply error.
+        
+        Notes:
+            Initializes the internal cards store and a `create_note_calls` counter set to 0.
+        """
         self._cards = cards
         self._fail_apply = fail_apply
         self._fail_apply_message = fail_apply_message
         self.create_note_calls = 0
 
     def get_card(self, card_id: int) -> FakeCard | None:
+        """
+        Retrieve the FakeCard for the given card id.
+        
+        Returns:
+            The FakeCard with the given id, or None if no card exists for that id.
+        """
         return self._cards.get(card_id)
 
     def answer_card(self, card: FakeCard, ease: int) -> None:
@@ -64,17 +81,52 @@ class FakeRuntime:
             card.ivl = max(card.ivl, 4)
 
     def get_deck_name(self, deck_id: int) -> str:
+        """
+        Format a numeric deck identifier into its display name.
+        
+        Returns:
+            deck_name (str): The display name for the deck, e.g. "Deck 3001".
+        """
         return f'Deck {deck_id}'
 
     def get_model(self, model_name: str) -> str | None:
+        """
+        Return the model name when it matches the known 'Mining Model'.
+        
+        Parameters:
+            model_name (str): Name of the model to look up.
+        
+        Returns:
+            str | None: The same `model_name` if it equals 'Mining Model', `None` otherwise.
+        """
         return model_name if model_name == 'Mining Model' else None
 
     def get_deck_id(self, deck_name: str) -> int | None:
+        """
+        Map a deck name to its numeric ID used by the test runtime.
+        
+        Parameters:
+            deck_name (str): The name of the deck to resolve.
+        
+        Returns:
+            int | None: The deck's numeric ID if found, otherwise None.
+        """
         if deck_name == 'Deck 3001':
             return 3001
         return None
 
     def create_note(self, model: str, deck_id: int, note_fields: dict[str, str]) -> int:
+        """
+        Create a new note and register a corresponding FakeCard in the runtime's card store.
+        
+        Parameters:
+            model (str): Name of the note's model to assign to the created card.
+            deck_id (int): Deck identifier to assign to the created card.
+            note_fields (dict[str, str]): Mapping of note field names to values; the fake runtime does not inspect these values.
+        
+        Returns:
+            int: The created note's note id (`nid`).
+        """
         self.create_note_calls += 1
         note_id = max([*self._cards.keys(), 1000]) + 100
         created_card = FakeCard(
@@ -96,12 +148,42 @@ class FakeRuntime:
         return note_id
 
     def get_created_card(self, note_id: int, template_ord: int) -> FakeCard | None:
+        """
+        Finds a created card matching the given note ID and template ordinal.
+        
+        Parameters:
+            note_id (int): The note identifier to match.
+            template_ord (int): The template ordinal (card template index) to match.
+        
+        Returns:
+            FakeCard | None: The first matching card, or None if no matching card exists.
+        """
         for card in self._cards.values():
             if card.nid == note_id and card.template_ord == template_ord:
                 return card
         return None
 
     def describe_card(self, card_id: int) -> dict[str, object] | None:
+        """
+        Provide a dictionary describing the card identified by card_id.
+        
+        Returns:
+            dict: A mapping with keys:
+                - 'cardId': card's internal id
+                - 'noteId': note id associated with the card
+                - 'deckName': human-readable deck name
+                - 'modelName': card's model name
+                - 'templateOrd': template ordinal used by the card
+                - 'templateName': template name used by the card
+                - 'reviewState': one of 'new', 'learning', 'review', 'suspended', or 'buried'
+                - 'queue': numeric queue value
+                - 'type': numeric card type
+                - 'due': due value for the card
+                - 'interval': current interval (ivl)
+                - 'reps': review count
+                - 'lapses': lapse count
+            or None if no card with the given card_id exists.
+        """
         card = self._cards.get(card_id)
         if card is None:
             return None
@@ -135,6 +217,11 @@ class FakeRuntime:
 
 class TargetedReviewServiceTests(unittest.TestCase):
     def test_successful_review_write(self) -> None:
+        """
+        Verifies that submitting a valid review rating updates an existing reviewable card and returns the expected response.
+        
+        Sets up a reviewable card in the runtime, issues a review request with rating "good", and asserts the response indicates success, preserves the requestId, and includes the updated cardId, rating, ease (3), and an incremented reps count.
+        """
         runtime = FakeRuntime(
             {
                 1001: FakeCard(
@@ -277,6 +364,11 @@ class TargetedReviewServiceTests(unittest.TestCase):
         self.assertEqual(response['error']['code'], 'APPLY_FAILED')
 
     def test_not_due_scheduler_rejection_maps_to_card_not_reviewable(self) -> None:
+        """
+        Verify that a scheduler rejection indicating a card is not due is reported as CARD_NOT_REVIEWABLE with error details.reason set to "not_due".
+        
+        Sets up a runtime where applying an answer fails with the message "Card is not due yet." and asserts the handler returns success=False, error.code == "CARD_NOT_REVIEWABLE", and error.details.reason == "not_due".
+        """
         runtime = FakeRuntime(
             {
                 2020: FakeCard(
@@ -390,6 +482,11 @@ class TargetedReviewServiceTests(unittest.TestCase):
         self.assertEqual(response['result']['templateOrd'], 0)
 
     def test_commit_returns_model_not_found(self) -> None:
+        """
+        Verify that a create-and-review commit fails when the specified model does not exist.
+        
+        Sends a commit request with writeTarget.model set to a missing model and asserts the response is unsuccessful with error code 'MODEL_NOT_FOUND'.
+        """
         runtime = FakeRuntime({})
 
         response = handle_commit_request(
