@@ -35,6 +35,8 @@ class _FakeCol:
         self._get_card_error = get_card_error
         self.crt = crt
         self.created = created
+        self.last_added_note: object | None = None
+        self.last_add_deck_id: int | None = None
 
     def get_card(self, _card_id: int) -> object | None:
         """
@@ -80,6 +82,8 @@ class _FakeCol:
         
         This method intentionally performs no action; it exists so tests can call the collection API without side effects.
         """
+        self.last_added_note = _note
+        self.last_add_deck_id = _deck_id
         return None
 
 
@@ -138,6 +142,9 @@ class RuntimeTests(unittest.TestCase):
         runtime = AnkiCollectionRuntime(mw)
 
         self.assertEqual(runtime.create_note(SimpleNamespace(), 42, {'front': 'value'}), 4321)
+        self.assertIsNotNone(mw.col.last_added_note)
+        self.assertEqual(mw.col.last_added_note['front'], 'value')
+        self.assertEqual(mw.col.last_add_deck_id, 42)
 
     def test_get_deck_id_returns_none_when_deck_lacks_id(self) -> None:
         mw = SimpleNamespace(col=SimpleNamespace(decks=SimpleNamespace(by_name=lambda _name: {'name': 'Mining'})))

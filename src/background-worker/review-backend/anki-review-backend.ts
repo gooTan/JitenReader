@@ -625,7 +625,7 @@ export class AnkiReviewBackend implements ReviewBackend {
       reviewMetadata.mappingOutcome !== 'none'
     ) {
       throw new TargetedReviewWriteError(
-        'WRITE_TARGET_INVALID',
+        'WRITE_MODEL_CREATION_FAILED',
         'Cannot create a new Anki card for the current review state.',
       );
     }
@@ -779,7 +779,7 @@ export class AnkiReviewBackend implements ReviewBackend {
     switch (reason) {
       case 'ambiguous-card-template-ord':
         return new TargetedReviewWriteError(
-          'WRITE_TARGET_AMBIGUOUS',
+          'TARGET_AMBIGUITY',
           'Cannot review in Anki: multiple write targets match this term.',
         );
       case 'missing-card-template-ord':
@@ -789,7 +789,7 @@ export class AnkiReviewBackend implements ReviewBackend {
       case 'missing-template-targets':
       default:
         return new TargetedReviewWriteError(
-          'WRITE_TARGET_INVALID',
+          'CARD_DESCRIPTION_FAILED',
           'Cannot review in Anki: no valid write target is configured.',
         );
     }

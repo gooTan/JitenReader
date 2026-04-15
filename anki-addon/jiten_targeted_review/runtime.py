@@ -172,10 +172,13 @@ class AnkiCollectionRuntime:
         self._mw.col.add_note(note, deck_id)
 
         note_id = getattr(note, 'id', None) or getattr(note, 'nid', None)
-        if not note_id:
-            raise RuntimeError('Created note id was unavailable after add_note().')
+        if note_id is None:
+            raise RuntimeError('Created note id was invalid/unavailable after add_note().')
 
-        return int(note_id)
+        try:
+            return int(note_id)
+        except (TypeError, ValueError) as err:
+            raise RuntimeError('Created note id was invalid/unavailable after add_note().') from err
 
     def get_created_card(self, note_id: int, template_ord: int) -> Any | None:
         """

@@ -133,6 +133,51 @@
   - hidden unsupported controls in Anki mode
 
 ## Run History
+### 2026-04-15 - Start-of-Run (Runtime Contract And Test Coverage Verification)
+- Stage:
+  - Stage 12 - Implement Anki New-Card Lifecycle.
+- Run intent:
+  - Verify the current review comments against the checked-out branch, harden the runtime created-note failure contract, and strengthen regression coverage for note materialization and deck targeting.
+- Current implementation state:
+  - The branch still contains the Stage 12 create-and-review flow and the recent PR cleanup fixes.
+  - `AnkiCollectionRuntime.create_note()` still converts the created note id with a bare `int(...)`, so invalid ids can currently escape as low-level conversion errors.
+  - The `create_note()` runtime test only asserts the returned id and does not currently prove the `front` field or requested deck id were passed through.
+  - The parser-lifecycle log-trim request does not match the current branch scope, so it is being treated as stale rather than forced into this branch.
+- Exact goal of this run:
+  - Re-raise invalid created-note ids as a `RuntimeError` with a clear failure message.
+  - Extend the runtime test so it asserts field materialization and the add-note deck id.
+  - Leave the log archival request alone unless later verification proves that this branch really does need it.
+- Blockers or prerequisites already recorded:
+  - No active blocker is recorded.
+  - The parser-lifecycle archive/trim request appears stale against the current checkout.
+- Risks/assumptions carried in:
+  - Assumption: the current branch is still Stage 12 focused, so the parser-lifecycle documentation change should not be forced in here.
+  - Risk: if the runtime continues to surface raw conversion errors, callers get an inconsistent failure contract.
+
+### 2026-04-15 - Completed (Runtime Contract And Test Coverage Verification)
+- Completed work:
+  - Hardened `AnkiCollectionRuntime.create_note()` so invalid created-note ids now re-raise as a clear `RuntimeError` instead of leaking raw conversion errors.
+  - Expanded the `test_create_note_supports_item_assignment_and_returns_note_id` regression so it now verifies both note-field materialization and the requested deck id path.
+  - Verified that the parser-lifecycle log-trim request does not apply to this branch as checked out, so no archive split was introduced here.
+- Files changed:
+  - `anki-addon/jiten_targeted_review/runtime.py`
+  - `anki-addon/tests/test_runtime.py`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Kept the runtime failure contract explicit at the boundary by converting malformed note ids into a single `RuntimeError` with a stable message.
+  - Strengthened the unit test to cover both field assignment and deck targeting so the regression will fail if either behaviour drifts later.
+- Blockers / open issues:
+  - No blocker remains for the runtime contract/test portion of this review pass.
+  - The parser-lifecycle archive/trim request was treated as stale against the current branch and was intentionally not applied.
+- Verification status:
+  - `py -3 -m unittest tests.test_runtime tests.test_service` passes in `anki-addon/`.
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - If the parser-lifecycle documentation trim is still desired, it should be raised against the branch that actually contains those parser changes rather than the current Stage 12 checkout.
+- Handoff:
+  - Runtime note creation is now fail-closed with a consistent error type, and the test coverage now checks the materialized note fields plus deck targeting path.
+
 ### 2026-04-15 - Start-of-Run (PR Branch Cleanup: Resolve Remaining Review Findings)
 - Stage:
   - Stage 12 - Implement Anki New-Card Lifecycle.
