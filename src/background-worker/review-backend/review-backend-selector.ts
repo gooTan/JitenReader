@@ -1,4 +1,5 @@
 import { getConfiguration } from '@shared/configuration/get-configuration';
+import { debug } from '@shared/debug';
 import {
   ReviewBackendAvailability,
   ReviewBackendAvailabilityProbes,
@@ -21,6 +22,12 @@ type CachedAvailabilityEntry = {
   value: ReviewBackendAvailability;
 };
 
+type AvailabilityProbeResult = {
+  availability: ReviewBackendAvailability;
+  cacheHit: boolean;
+  probeMs: number;
+};
+
 export class ReviewBackendSelector {
   private readonly _availabilityCache: Partial<Record<ReviewBackendId, CachedAvailabilityEntry>> =
     {};
@@ -35,9 +42,25 @@ export class ReviewBackendSelector {
   ) {}
 
   public async getStatus(options?: ReviewBackendSelectionOptions): Promise<ReviewBackendStatus> {
+    const preferredBackendStartedAt = performance.now();
     const preferredBackend = await this.getPreferredBackend(options);
-    const availability = await this.getAvailability(preferredBackend);
+    const preferredBackendMs = performance.now() - preferredBackendStartedAt;
+    const availabilityStartedAt = performance.now();
+    const availabilityResult = await this.getAvailability(preferredBackend);
+    const availabilityMs = performance.now() - availabilityStartedAt;
+    const availability = availabilityResult.availability;
     const activeBackend = this.selectActiveBackend(preferredBackend, availability);
+
+    debug('ParseBackendSelection', {
+      activeBackend,
+      availability,
+      availabilityCacheHit: availabilityResult.cacheHit,
+      availabilityMs,
+      preferredBackend,
+      preferredBackendMs,
+      probeMs: availabilityResult.probeMs,
+      requestedBackend: options?.requestedBackend ?? null,
+    });
 
     return {
       preferredBackend,
@@ -88,36 +111,58 @@ export class ReviewBackendSelector {
     return enableAnkiIntegration ? 'anki' : 'jiten';
   }
 
-  private async getAvailability(
-    preferredBackend: ReviewBackendId,
-  ): Promise<Record<ReviewBackendId, ReviewBackendAvailability>> {
+  private async getAvailability(preferredBackend: ReviewBackendId): Promise<{
+    availability: Record<ReviewBackendId, ReviewBackendAvailability>;
+    cacheHit: boolean;
+    probeMs: number;
+  }> {
     const availability: Record<ReviewBackendId, ReviewBackendAvailability> = {
       ...DEFAULT_AVAILABILITY,
     };
 
     if (preferredBackend === 'jiten') {
-      return availability;
+      return {
+        availability,
+        cacheHit: true,
+        probeMs: 0,
+      };
     }
 
-    availability[preferredBackend] = await this.getAvailabilityFromProbe(preferredBackend);
+    const probeResult = await this.getAvailabilityFromProbe(preferredBackend);
 
-    return availability;
+    availability[preferredBackend] = probeResult.availability;
+
+    return {
+      availability,
+      cacheHit: probeResult.cacheHit,
+      probeMs: probeResult.probeMs,
+    };
   }
 
   private async getAvailabilityFromProbe(
     backend: ReviewBackendId,
-  ): Promise<ReviewBackendAvailability> {
+  ): Promise<AvailabilityProbeResult> {
     const now = Date.now();
     const cachedEntry = this._availabilityCache[backend];
     const probe = this._availabilityProbes[backend];
 
     if (cachedEntry && cachedEntry.expiresAt > now) {
-      return cachedEntry.value;
+      return {
+        availability: cachedEntry.value,
+        cacheHit: true,
+        probeMs: 0,
+      };
     }
 
     if (!probe) {
-      return DEFAULT_AVAILABILITY[backend];
+      return {
+        availability: DEFAULT_AVAILABILITY[backend],
+        cacheHit: true,
+        probeMs: 0,
+      };
     }
+
+    const probeStartedAt = performance.now();
 
     if (!this._inFlightProbes[backend]) {
       this._inFlightProbes[backend] = (async (): Promise<ReviewBackendAvailability> => {
@@ -130,14 +175,20 @@ export class ReviewBackendSelector {
     }
 
     const result = await this._inFlightProbes[backend];
+    const probeMs = performance.now() - probeStartedAt;
 
     this._availabilityCache[backend] = {
       value: result,
       expiresAt: now + this._availabilityCacheTtlMs,
     };
+
     delete this._inFlightProbes[backend];
 
-    return result;
+    return {
+      availability: result,
+      cacheHit: false,
+      probeMs,
+    };
   }
 
   private selectActiveBackend(

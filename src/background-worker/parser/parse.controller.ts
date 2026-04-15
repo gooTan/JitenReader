@@ -9,7 +9,6 @@ import { WorkerQueue } from './worker-queue';
 
 export class ParseController {
   private BATCH_SIZE = 80000;
-  private JITEN_TIMEOUT = 50;
 
   private _pendingParagraphs = new Map<number, Handle>();
   private _workerQueue = new WorkerQueue();
@@ -83,7 +82,6 @@ export class ParseController {
       this._workerQueue.push(
         () => new Parser(batch, this._reviewBackendSelector).parse(),
         (e) => batch.handles.forEach((handle) => handle.reject(e)),
-        this.JITEN_TIMEOUT,
       );
     }
   }

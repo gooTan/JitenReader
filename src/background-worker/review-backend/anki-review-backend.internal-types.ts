@@ -62,6 +62,14 @@ export type AnkiParseLookupMetrics = {
   findNotesRequests: number;
   intervalRequests: number;
   notesInfoRequests: number;
+  primeModelTemplatesMs?: number;
+  readCardsIndexedMs?: number;
+  readContextReadyMs?: number;
+  readIntervalsIndexedMs?: number;
+  readNotesIndexedMs?: number;
+  readonlyConfigMs?: number;
+  resolvePlanNoteIdsMs?: number;
+  resolveTermsMs?: number;
   totalTerms: number;
   uniqueCardIds: number;
   uniqueNoteIds: number;

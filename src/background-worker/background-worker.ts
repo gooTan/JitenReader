@@ -25,7 +25,8 @@ import { LookupTextCommandHandler } from './lookup/lookup-text-command.handler';
 import { AbortRequestCommandHandler } from './parser/abort-request-command.handler';
 import { ParseCommandHandler } from './parser/parse-command.handler';
 import { ParseController } from './parser/parse.controller';
-import { probeAnkiAvailability } from './review-backend/anki-availability-probe';
+import { createAnkiAvailabilityProbe } from './review-backend/anki-availability-probe';
+import { AnkiReadinessService } from './review-backend/anki-readiness-service';
 import { AnkiReviewBackend } from './review-backend/anki-review-backend';
 import { JitenReviewBackend } from './review-backend/jiten-review-backend';
 import { ReviewBackendSelector } from './review-backend/review-backend-selector';
@@ -48,14 +49,15 @@ const lookupController = new LookupController();
 const lookupTextCommandHandler = new LookupTextCommandHandler(lookupController);
 
 const jitenReviewBackend = new JitenReviewBackend();
-const ankiReviewBackend = new AnkiReviewBackend();
+const ankiReadinessService = new AnkiReadinessService();
+const ankiReviewBackend = new AnkiReviewBackend(ankiReadinessService);
 const reviewBackendSelector = new ReviewBackendSelector(
   {
     jiten: jitenReviewBackend,
     anki: ankiReviewBackend,
   },
   {
-    anki: probeAnkiAvailability,
+    anki: createAnkiAvailabilityProbe(ankiReadinessService),
   },
 );
 

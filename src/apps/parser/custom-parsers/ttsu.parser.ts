@@ -3,6 +3,7 @@ import { Fragment, Paragraph } from '../../batches/types';
 import { Registry } from '../../integration/registry';
 import { TtsuParagraphReader } from '../../paragraph-reader/ttsu.paragraph-reader';
 import { AutomaticParser } from '../automatic.parser';
+import { VisibleParseScheduler } from '../visible-parse-scheduler';
 import { TtsuTextHighlighter } from './ttsu-text-highlighter';
 
 const ttsuApplyTokens = async (fragments: Fragment[], tokens: JitenToken[]): Promise<void> => {
@@ -21,11 +22,15 @@ const getTtsuParagraphs = (
 export class TtsuParser extends AutomaticParser {
   protected _pageObserver?: MutationObserver;
   protected _chapterObserver?: IntersectionObserver;
+  protected _chapterScheduler?: VisibleParseScheduler;
   private _hasReservedFuriganaSpace = false;
+  private _observedChapters = new Set<Element>();
 
   public override destroy(): void {
     this._pageObserver?.disconnect();
     this._chapterObserver?.disconnect();
+    this._chapterScheduler?.destroy();
+    this._observedChapters.clear();
     super.destroy();
   }
 
@@ -59,6 +64,9 @@ export class TtsuParser extends AutomaticParser {
   protected visibleObserverOnExit(): void {
     this._pageObserver?.disconnect();
     this._chapterObserver?.disconnect();
+    this._chapterScheduler?.demote(
+      Array.from(this._observedChapters).filter((chapter) => chapter.isConnected),
+    );
   }
 
   protected override parseNodes(
@@ -85,19 +93,44 @@ export class TtsuParser extends AutomaticParser {
   }
 
   protected setupChapterObservers(chapters: NodeListOf<Element>): void {
+    this._chapterObserver?.disconnect();
+    this._observedChapters = new Set(
+      Array.from(this._observedChapters).filter((chapter) => chapter.isConnected),
+    );
     this._chapterObserver = new IntersectionObserver((entries) => {
       for (const entry of entries) {
         if (entry.isIntersecting) {
-          this.parseNode(entry.target);
+          this._chapterScheduler?.discover([entry.target], 'visibility');
 
           continue;
         }
 
-        Registry.batchController.dismissNode(entry.target);
+        this._chapterScheduler?.demote([entry.target]);
       }
     });
 
+    if (this._chapterScheduler) {
+      this._chapterScheduler.setObserver(this._chapterObserver);
+      this._chapterScheduler.resume(this._chapterObserver);
+    } else {
+      this._chapterScheduler = new VisibleParseScheduler({
+        observer: this._chapterObserver,
+        createRegisterOptions: (): {
+          collapseWhitespace: boolean | undefined;
+          getParagraphsFn: typeof getTtsuParagraphs;
+          applyFn: typeof ttsuApplyTokens;
+          onComplete: () => void;
+        } => ({
+          collapseWhitespace: this._meta.collapseWhitespace,
+          getParagraphsFn: getTtsuParagraphs,
+          applyFn: ttsuApplyTokens,
+          onComplete: () => window.dispatchEvent(new Event('resize')),
+        }),
+      });
+    }
+
     for (const chapter of chapters) {
+      this._observedChapters.add(chapter);
       this._chapterObserver.observe(chapter);
     }
   }

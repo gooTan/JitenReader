@@ -131,6 +131,463 @@
   - suspended/buried frontend surfacing
 
 ## Run History
+### 2026-04-11 - Start-of-Run (Stage 7B Large-Page Hardening: Close Scheduler Gaps And Custom Host Scroll Cancellation)
+- Stage:
+  - Stage 7B - Optimize Anki Mapping Parse Performance.
+- Run intent:
+  - Fix the remaining correctness and scope gaps in the stable visible-parse queue work after implementation audit.
+- Current implementation state:
+  - The shared `BaseParser` visible-observer path now uses `VisibleParseScheduler` with queue ownership and mutation/removal invalidation.
+  - Audit identified three remaining issues:
+    - node-level automatic retry can reparse a partially applied node after a late paragraph failure
+    - the rollout flag is not a real containment switch because it is hard-enabled
+    - several custom parse-visible parsers (`Manatan`, `Mokuro`, `Ttsu`) still keep scroll-sensitive lifecycle semantics outside the new shared scheduler path
+- Exact goal of this run:
+  - Prevent unsafe automatic node retry after any partial paragraph application.
+  - Convert the rollout flag into a real internal override point.
+  - Harden the remaining custom parse-visible flows so scrolling away no longer cancels or recreates parse work unnecessarily.
+- Blockers or prerequisites already recorded:
+  - No active blocker is recorded.
+  - Existing lint/build verification is green, so this pass can stay focused on hardening rather than general repair.
+- Risks/assumptions carried in:
+  - Assumption: disabling automatic retry after partial apply is safer than attempting node-level DOM rollback in this stage.
+  - Assumption: custom parser fixes should preserve host-specific behaviour while removing viewport-exit cancellation.
+  - Risk: some custom hosts may have intentionally relied on exit-time teardown; mitigation is to keep teardown tied to true DOM removal or parser destruction rather than scroll exit.
+
+### 2026-04-11 - Completed (Stage 7B Large-Page Hardening: Closed Scheduler Gaps And Custom Host Scroll Cancellation)
+- Completed work:
+  - Hardened `BatchController` error reporting so node-level errors now report how many paragraphs were already applied before failure.
+  - Updated `VisibleParseScheduler` to treat partial node failure as non-retryable in-place work: automatic retry now only happens when zero paragraphs were applied, avoiding reparsing a partially mutated DOM subtree.
+  - Generalized scheduler registration so it can consume custom `RegisterOptions` factories instead of only the shared parser defaults.
+  - Replaced the hard-coded parser flag with a real internal runtime feature flag lookup via `window.__JITEN_INTERNAL_FLAGS__`, restoring an actual containment switch for the shared scheduler path.
+  - Hardened remaining custom parse-visible flows:
+    - `ManatanMangaParser` now tracks active boxes and no longer cancels them on viewport exit, preventing duplicate registration on re-entry while parse is still in flight.
+    - `TtsuParser` now uses `VisibleParseScheduler` for chapter-level parsing instead of dismissing chapter work on exit.
+    - `MokuroParser` no longer destroys the panel instance merely because it left the viewport; teardown remains tied to real cleanup/destruction paths.
+- Files changed:
+  - `docs/implementation-working-log.md`
+  - `src/apps/batches/batch-controller.ts`
+  - `src/apps/batches/types.ts`
+  - `src/apps/parser/base.parser.ts`
+  - `src/apps/parser/custom-parsers/manatan-manga.parser.ts`
+  - `src/apps/parser/custom-parsers/mokuro.parser.ts`
+  - `src/apps/parser/custom-parsers/ttsu.parser.ts`
+  - `src/apps/parser/parser-feature-flags.ts`
+  - `src/apps/parser/visible-parse-scheduler.ts`
+- Architectural decisions made:
+  - Chose “no automatic retry after partial apply” over attempted DOM rollback because rollback correctness is harder than deferring reparse until explicit mutation/manual invalidation.
+  - Made the shared scheduler feature flag runtime-overridable and default-off to match the staged-rollout intent while still allowing local verification via an internal override.
+  - Preserved host-specific parser behaviour in custom parsers, but removed viewport-exit cancellation where that exit state was acting as accidental work invalidation.
+- Blockers / open issues:
+  - The shared `BaseParser` scheduler path is now behind an internal runtime flag and is default-off; local verification must enable it explicitly with `window.__JITEN_INTERNAL_FLAGS__ = { stableVisibleParseQueue: true }` before the parser initializes.
+  - There is still no dedicated automated test harness for parser lifecycle tests, so the hardening remains verified by static reasoning plus lint/build rather than executable parser-specific tests.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+  - Manual/live extension verification not yet performed in this run.
+- Next recommended step:
+  - Run live verification in two modes:
+    - shared scheduler disabled (default) to confirm custom parser hardening causes no regressions
+    - shared scheduler enabled via internal flag to validate the shared-path redesign on large static pages
+  - Re-check large-page logs for:
+    - no automatic retries after partial apply failures
+    - reduced scroll-exit churn on `Ttsu` / `Manatan`
+    - stable parse counts when revisiting already discovered content
+- Handoff:
+  - Partial-node retry is now blocked safely, custom parse-visible exit cancellation has been hardened, and the shared scheduler is now behind a real runtime flag.
+  - The next run should enable `window.__JITEN_INTERNAL_FLAGS__ = { stableVisibleParseQueue: true }` before page/parser startup and then capture fresh large-page logs to validate the shared scheduler path end-to-end.
+
+### 2026-04-11 - Start-of-Run (Stage 7B Large-Page Architecture: Stable Visible Parse Queue Redesign)
+- Stage:
+  - Stage 7B - Optimize Anki Mapping Parse Performance.
+- Run intent:
+  - Replace the current viewport-owned `parseVisibleObserver` lifecycle with a parser-local visible-parse scheduler that keeps discovered work owned until completion, mutation-driven invalidation, or removal.
+- Current implementation state:
+  - Large-page parse churn has already been reduced by visible-observer coalescing and successful-container retirement.
+  - The current visible parsing path still keeps lifecycle state directly in `BaseParser` via pending / in-flight / parsed element sets.
+  - Viewport exit still dismisses node ownership through `BatchController.dismissNode(...)`, which means scroll timing can still affect total work while parsing remains active.
+  - `BatchController` already exposes `onEmpty` and `onComplete`, but does not yet expose a generic error callback for scheduler ownership decisions.
+  - `AutomaticParser` already routes added/removed node notifications through shared parser hooks, so this is a good insertion point for generic discovery/invalidation behavior across all `parseVisibleObserver` hosts.
+- Exact goal of this run:
+  - Introduce a generic visible-parse scheduler abstraction for all `parseVisibleObserver` hosts.
+  - Make visibility affect discovery and priority only, not parse-work lifetime.
+  - Integrate completion / empty / error terminal callbacks so the scheduler owns retries and terminal success.
+  - Add mutation/removal invalidation handling and targeted debug diagnostics for the scheduler.
+  - Keep the rollout staged behind an internal flag while enabling the new path by default for local verification.
+- Blockers or prerequisites already recorded:
+  - No active blocker is recorded.
+  - Existing diagnostics and large-page console exports already establish that remaining instability is tied to viewport-owned lifecycle behavior rather than Anki cold-path latency.
+- Risks/assumptions carried in:
+  - Assumption: stable queue ownership will materially reduce scroll-timing sensitivity on large static pages without changing parse correctness.
+  - Assumption: preserving the current serialized parse/apply pipeline for the first rollout is the safest way to improve determinism without introducing new concurrency risk.
+  - Risk: dynamic hosts may rely on reparsing after live DOM mutation; mitigation is to treat added/removed nodes and meaningful subtree changes as invalidation triggers rather than relying on viewport exit.
+
+### 2026-04-11 - Completed (Stage 7B Large-Page Architecture: Stable Visible Parse Queue Redesign)
+- Completed work:
+  - Added a parser-local `VisibleParseScheduler` that owns discovered visible-parse work items by element identity, tracks priority/state/generation/retry state, and emits debug diagnostics for discovery, drain, invalidation, removal, retry, and completion.
+  - Reworked the shared `BaseParser` visible-observer path so visibility now promotes/demotes scheduler priority instead of dismissing parse work on viewport exit.
+  - Reworked `AutomaticParser` added/removed-node handling so mutation-driven discovery feeds the scheduler, initial observer bootstrap is distinguished from real mutations, and removed containers now explicitly purge scheduler ownership.
+  - Extended `BatchController` registration options with terminal node callbacks for success, empty, and error outcomes so the scheduler can own retries and terminal success decisions without rewriting the parse pipeline.
+  - Added an internal parser feature flag plus a legacy fallback path so the stable scheduler can be disabled in code if needed during verification.
+- Files changed:
+  - `docs/implementation-working-log.md`
+  - `src/apps/batches/batch-controller.ts`
+  - `src/apps/batches/types.ts`
+  - `src/apps/parser/automatic.parser.ts`
+  - `src/apps/parser/base.parser.ts`
+  - `src/apps/parser/parser-feature-flags.ts`
+  - `src/apps/parser/visible-parse-scheduler.ts`
+  - `src/apps/parser/visible-parse-scheduler.types.ts`
+- Architectural decisions made:
+  - Scoped the new scheduler to parsers that still use the shared `BaseParser` visible enter/exit lifecycle; bespoke parsers with overridden visible lifecycles remain on the legacy path for now to avoid mixing this architectural shift with host-specific reader logic in one run.
+  - Kept the rollout behind an internal flag (`parserFeatureFlags.stableVisibleParseQueue`) but enabled the new path by default locally so large-page verification exercises the scheduler rather than the legacy path.
+  - Treated visibility as a priority signal only; real invalidation/removal still aborts node ownership through `BatchController.dismissNode(...)`.
+  - Chose a conservative retry policy of one automatic retry after node-level parse/apply failure; additional retries require mutation-driven invalidation or manual reparse.
+  - Allowed background discovered work to continue after discovery, but drain policy still prioritizes all visible work first and then dispatches background work one node at a time to keep visible latency preemptible.
+- Blockers / open issues:
+  - The repository still has no dedicated automated test harness for parser unit/integration tests, so the planned scheduler state-transition scenarios were not added as executable tests in this run.
+  - Custom parsers with bespoke visible lifecycle overrides (`Mokuro`, `Manatan`, `Ttsu`, etc.) still use their own legacy observer ownership semantics and may need a follow-up pass if they exhibit similar scroll-sensitivity.
+  - Live browser verification on large pages is still required to confirm parse-count stability and smoothness under back-and-forth scrolling while parsing is active.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+  - Manual/live extension verification not yet performed in this run.
+- Next recommended step:
+  - Re-run the large Japanese Wikipedia article and compare against the prior post-coalescing/post-delay-removal logs:
+    - count of `ParseProfile` entries
+    - total wall-clock time until parsing settles
+    - cumulative `jitenParseMs`
+    - new `ParseVisibleScheduler` debug snapshots for duplicate discoveries, invalidations, removals, retries, and visible/background completion mix
+  - Specifically verify that scrolling away from already discovered content no longer materially changes total work while parsing remains active.
+- Handoff:
+  - Shared `BaseParser` visible parsing now uses a stable scheduler-owned queue with mutation/removal invalidation and explicit terminal callbacks from `BatchController`.
+  - The next run should validate the new debug signals on a large static page first, then decide whether any remaining instability warrants host-specific grouping or a follow-up pass for custom parsers with overridden visible lifecycles.
+
+### 2026-04-11 - Start-of-Run (Stage 7B Large-Page Optimisation: Remove Fixed Parse Queue Delay)
+- Stage:
+  - Stage 7B - Optimize Anki Mapping Parse Performance.
+- Run intent:
+  - Remove the fixed `50ms` idle gap between background parse batches so large-page parsing no longer pays avoidable queue delay hundreds of times across one session.
+- Current implementation state:
+  - Large-page parse churn has already been reduced substantially by visible-observer coalescing and successful-container retirement.
+  - Audit shows the background parse queue still inserts a fixed delay after every batch:
+    - `ParseController` passes `JITEN_TIMEOUT = 50`
+    - `WorkerQueue` sleeps for that duration before starting the next queued parse batch
+  - On large-page logs with over a hundred parse batches, this policy can add multiple seconds of guaranteed idle time even when the next batch is ready to run immediately.
+- Exact goal of this run:
+  - Remove the fixed parse-queue wait from the background parse path.
+  - Keep the change narrowly scoped to parsing and preserve the existing queue serialization / error handling behavior.
+- Blockers or prerequisites already recorded:
+  - No active blocker is recorded.
+  - Prior diagnostics already established that selection and Anki cold-path regressions are no longer the primary large-page issue.
+- Risks/assumptions carried in:
+  - Assumption: the fixed `50ms` delay is legacy throttling that is no longer justified after the recent reductions in parse churn.
+  - Assumption: keeping serialized queue execution while removing the artificial sleep is a low-risk throughput win.
+  - Risk: if the old delay was masking an external rate-limit or event-loop starvation issue, removing it could increase pressure during pathological runs; mitigation is to scope the change to parse queue timing only and keep all existing batching/serialization behavior intact.
+
+### 2026-04-11 - Completed (Stage 7B Large-Page Optimisation: Removed Fixed Parse Queue Delay)
+- Completed work:
+  - Removed the fixed `50ms` inter-batch wait from the background parse queue path.
+  - Kept the worker queue serialized and unchanged in all other respects; only the artificial pause between parse batches was removed.
+- Files changed:
+  - `docs/implementation-working-log.md`
+  - `src/background-worker/parser/parse.controller.ts`
+- Architectural decisions made:
+  - Scoped the change to `ParseController` rather than rewriting `WorkerQueue` globally, so only parse work loses the delay.
+  - Preserved the existing single-flight queue behavior to avoid changing concurrency or error-propagation semantics in the same run.
+- Blockers / open issues:
+  - Live remeasurement is still needed to confirm the improvement on large pages.
+  - Remaining large-page cost is still likely dominated by Jiten parse throughput and the number/size of large batches after the delay is removed.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+  - Manual/live extension verification not yet performed in this run.
+- Next recommended step:
+  - Re-run the large Japanese Wikipedia page and compare against the prior post-coalescing log:
+    - count of `ParseProfile` entries
+    - total duration until parsing settles
+    - cumulative `jitenParseMs`
+  - Expect a direct wall-clock improvement even if `jitenParseMs` itself stays similar, because the fixed per-batch idle gaps are gone.
+- Handoff:
+  - The parse queue no longer sleeps `50ms` between batches.
+  - The next run should measure the large-page wall-clock effect and then decide whether the next remaining optimisation target is batch sizing or host-level grouping.
+
+### 2026-04-11 - Start-of-Run (Stage 7B Large-Page Investigation: Visible-Observer Parse Churn)
+- Stage:
+  - Stage 7B - Optimize Anki Mapping Parse Performance.
+- Run intent:
+  - Investigate and reduce the extreme long-page parse time observed on large articles such as Japanese Wikipedia, where the background log shows hundreds of parse batches over time.
+- Current implementation state:
+  - Cold-path Anki readiness probing and template-name priming have already been optimized.
+  - Large-page logs now show the dominant problem is not Anki latency but parse churn:
+    - hundreds of `ParseProfile` entries for one page session
+    - large cumulative `jitenParseMs`
+    - relatively low per-batch backend-selection cost after warm-up
+  - Wikipedia uses a dedicated host-meta entry with `parseVisibleObserver: true` and an added observer for top-level article nodes.
+- Exact goal of this run:
+  - Reduce visible-observer-driven parse churn without changing parse semantics.
+  - Specifically:
+    - coalesce visible-entry parsing into fewer flushes
+    - stop reparsing the same visible container after it has already been successfully parsed once
+    - preserve retry behavior for nodes that leave the viewport before parse completion
+- Blockers or prerequisites already recorded:
+  - No active blocker is recorded.
+  - Existing debug instrumentation and the exported console log already identify this as a foreground dispatch/coalescing problem.
+- Risks/assumptions carried in:
+  - Assumption: a meaningful share of the 686 logged parse batches came from visible-observer churn rather than truly necessary distinct full-batch sends.
+  - Assumption: unobserving containers after successful parse is safe for static content like Wikipedia because the container’s current text has already been wrapped and marked.
+  - Risk: generic parse-visible hosts may rely on reparsing the same container after content changes; mitigation is to only mark as completed after successful parse and keep retry behavior for exited-before-complete nodes.
+
+### 2026-04-11 - Completed (Stage 7B Large-Page Optimisation: Generic Visible-Observer Coalescing And Retirement)
+- Completed work:
+  - Added generic visible-observer queueing/coalescing in `BaseParser` so multiple viewport-entry events within a short window are flushed together instead of triggering immediate parse dispatch on every callback.
+  - Added parser-local tracking for visible containers in three states:
+    - pending
+    - in-flight
+    - parsed successfully
+  - Updated visible parsing so successfully parsed containers are marked complete and unobserved, preventing reparsing when the user scrolls away and back over the same static content block.
+  - Preserved retry behavior for incomplete work by clearing pending/in-flight state on viewport exit and dismissing the node from the batch controller, allowing a later re-entry to retry the parse.
+  - Added pause-safety by cancelling queued visible flushes when automatic parsers disconnect their observers.
+- Files changed:
+  - `docs/implementation-working-log.md`
+  - `src/apps/parser/base.parser.ts`
+  - `src/apps/parser/automatic.parser.ts`
+- Architectural decisions made:
+  - Implemented the fix generically in the shared visible-observer pipeline rather than special-casing Wikipedia so all `parseVisibleObserver` hosts benefit.
+  - Chose a small debounce window (`50ms`) to coalesce bursts without making parsing feel delayed.
+  - Marked containers as completed only after successful `onComplete` / `onEmpty` callbacks so aborted or exited-before-complete nodes remain retryable.
+  - Kept the “parsed successfully” state parser-local and in-memory so SPA navigation / parser reinstall still starts cleanly.
+- Blockers / open issues:
+  - Live validation on a large page is still required to confirm the number of `ParseProfile` entries drops materially.
+  - This run does not yet add richer foreground metrics for visible-flush counts beyond the existing `flushVisibleParseQueue` debug line.
+  - Dynamic hosts that genuinely mutate an already-parsed visible container without removing/replacing that container may still need a host-specific reset strategy in a future run.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+  - Manual/live extension verification not yet performed in this run.
+- Next recommended step:
+  - Re-test the same large Japanese Wikipedia article and compare against the prior console export:
+    - count of `ParseProfile` entries
+    - total duration until parsing settles
+    - frequency of `flushVisibleParseQueue`
+  - Confirm that scrolling back over already parsed sections no longer creates large new parse waves.
+- Handoff:
+  - Generic visible-observer coalescing and successful-container retirement are now in place.
+  - The next run should measure whether large-page parse churn is materially reduced and decide whether any remaining long-page cost is now dominated by Jiten throughput rather than dispatch behavior.
+
+### 2026-04-11 - Start-of-Run (Stage 7B Optimisation: Shared Anki Readiness Probing)
+- Stage:
+  - Stage 7B - Optimize Anki Mapping Parse Performance.
+- Run intent:
+  - Implement the first low-risk optimisation identified by diagnostics: share and cache Anki readiness probing between backend selection and the Anki read context so parse-time reads do not pay for duplicate network probes.
+- Current implementation state:
+  - Diagnostics show parse bottlenecks are dominated by Anki-side latency rather than foreground DOM work.
+  - The current duplicated readiness path is:
+    - `ReviewBackendSelector` availability probe via `probeAnkiAvailability()`
+    - `AnkiReadContext.ensureReadOnlyPathReady()` via `getApiVersion()` + `findNotes('nid:0')`
+  - These paths maintain separate caches and in-flight state, so a single parse can pay for both.
+- Exact goal of this run:
+  - Introduce one shared readiness service that:
+    - performs the conservative Anki readiness probe once
+    - caches the result for the existing short TTL
+    - shares in-flight work
+    - preserves fail-closed behavior on probe failures
+  - Wire both backend selection and `AnkiReadContext` through that shared service without changing parse semantics.
+- Blockers or prerequisites already recorded:
+  - Diagnostics instrumentation is already in place and will be used to validate the optimisation.
+  - No active blocker is recorded.
+- Risks/assumptions carried in:
+  - Assumption: sharing probe state will substantially reduce the current `backendSelectionMs + readContextReadyMs` overhead.
+  - Assumption: keeping the TTL short and invalidating on configuration/profile changes will keep staleness risk acceptable.
+  - Risk: if the shared service becomes less strict than the previous probes, parse semantics could drift; mitigation is to preserve the stricter readiness requirements, including collection-creation-time validation.
+
+### 2026-04-11 - Completed (Stage 7B Optimisation: Shared Anki Readiness Probing)
+- Completed work:
+  - Added `AnkiReadinessService` as a shared readiness/probe coordinator for the background worker.
+  - Moved conservative Anki readiness validation into the shared service:
+    - configured AnkiConnect URL must exist
+    - `getApiVersion()` must succeed and meet the minimum supported version
+    - `findNotes('nid:0')` must succeed for readonly-path validation
+    - collection creation time must be present and valid
+  - Added short-lived cached readiness state plus shared in-flight work so concurrent consumers reuse the same probe instead of issuing duplicate requests.
+  - Rewired backend selection to use the shared readiness service via `createAnkiAvailabilityProbe(...)`.
+  - Rewired `AnkiReadContext.ensureReadOnlyPathReady()` to use the same shared readiness service instead of maintaining its own separate probe cache.
+  - Reused the shared readiness service’s cached collection-creation timestamp to seed `AnkiReadContext`’s longer-lived scheduling cache, avoiding an immediate duplicate collection read after readiness succeeds.
+- Files changed:
+  - `docs/implementation-working-log.md`
+  - `src/background-worker/background-worker.ts`
+  - `src/background-worker/review-backend/anki-availability-probe.ts`
+  - `src/background-worker/review-backend/anki-read-context.ts`
+  - `src/background-worker/review-backend/anki-readiness-service.ts`
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+- Architectural decisions made:
+  - Used explicit dependency injection from `background-worker.ts` instead of a hidden module singleton so cache ownership stays visible and testable.
+  - Preserved fail-closed behaviour by keeping the shared readiness probe at least as strict as the previous separate probes.
+  - Kept cache TTL behaviour conservative by reusing the existing short readiness TTL and existing invalidation events on profile/configuration changes.
+  - Limited the optimisation to shared probing and cache reuse only; parse semantics, selection policy, and downstream mapping logic were intentionally left unchanged.
+- Blockers / open issues:
+  - Live remeasurement is still needed to confirm the expected reduction in `backendSelectionMs` and `readContextReadyMs`.
+  - The remaining large parse-time costs from diagnostics are still `primeModelTemplatesMs`, `resolvePlanNoteIdsMs`, `readCardsIndexedMs`, and `jitenParseMs`; those are future optimisation candidates, not part of this run.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+  - Manual/live extension verification not yet performed in this run.
+- Next recommended step:
+  - Re-run the same stage-7 test page and capture:
+    - `ParseBackendSelection`
+    - `AnkiParseReviewProfile`
+    - `ParseProfile`
+  - Confirm that:
+    - `availabilityCacheHit` becomes true for the parse-time selection/read-context handoff after the first probe
+    - `backendSelectionMs + readContextReadyMs` materially drops versus the prior trace
+    - parse behaviour and selected-card metadata remain unchanged
+- Handoff:
+  - Shared readiness probing is now in place and should remove the duplicated selector/read-context network probe cost.
+  - The next run should stay in Stage 7B, measure the post-change timings, and then decide whether the next optimisation slice should target template priming or batched card/query latency.
+
+### 2026-04-11 - Completed (Stage 7B Optimisation: Lazy Template Name Loading)
+- Completed work:
+  - Audited template-name usage and confirmed parse-time matching semantics are driven by `card.ord` and configured `templateOrds`, not by template names.
+  - Removed eager parse-time `primeModelTemplates(...)` from the Anki parse enrichment hot path.
+  - Kept parse-time metadata behavior safe by continuing to include `ankiTemplateOrd` while allowing `ankiTemplateName` to be absent during parse-time stale metadata and ambiguous candidate summaries.
+  - Added repository-level on-demand template-name loading so paths that need an actual template name can fetch it lazily and cache it:
+    - added shared in-flight deduplication for model-template fetches
+    - added `getTemplateNameLoaded(modelName, ord)` for lazy selected-target metadata
+  - Updated fresh selected-target grade metadata rebuild to lazily load the template name only for the concrete target card being rebuilt.
+- Files changed:
+  - `docs/implementation-working-log.md`
+  - `src/background-worker/review-backend/anki-read-repository.ts`
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+- Architectural decisions made:
+  - Treated `ankiTemplateName` as display/metadata quality rather than matching identity because selection semantics already rely on `ankiTemplateOrd`.
+  - Preserved user-facing fallback behavior by relying on the existing popup rendering fallback to `Template ${ord + 1}` when no template name is present.
+  - Scoped lazy loading to narrower fresh-selected-target paths instead of introducing asynchronous template fetches into the parse-time resolver.
+- Blockers / open issues:
+  - Live remeasurement is still needed to confirm the cold parse-time drop in `primeModelTemplatesMs` and overall `reviewStateMs`.
+  - Ambiguous candidate summaries may now more often show ordinal fallback labels instead of resolved template names on cold parse paths; this is expected and should be validated as acceptable UX.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+  - Manual/live extension verification not yet performed in this run.
+- Next recommended step:
+  - Re-run the same cold parse scenario and capture:
+    - `AnkiParseReviewProfile`
+    - `ParseProfile`
+  - Confirm:
+    - `primeModelTemplatesMs` drops to `0`
+    - cold `reviewStateMs` and `totalParseMs` materially improve
+    - ambiguous candidate summaries still render acceptably with ordinal fallback labels
+- Handoff:
+  - Parse-time template-name priming has been removed; matching semantics should be unchanged because ord-based filtering remains intact.
+  - The next run should validate the new cold timings and, if needed, decide whether the next remaining cold-path target is `resolvePlanNoteIdsMs` or `readCardsIndexedMs`.
+
+### 2026-04-11 - Start-of-Run (Stage 7B Diagnostics: Parse Performance Bottleneck Investigation)
+- Stage:
+  - Stage 7B - Optimize Anki Mapping Parse Performance.
+- Run intent:
+  - Diagnose the current parse-performance bottleneck before making optimisation changes, using existing timing hooks plus lightweight instrumentation that can be inspected in browser DevTools.
+- Current implementation state:
+  - The working log still marks Stage 11 as the active implementation stage, and Stage 11 behaviour remains the current product focus.
+  - Separately, the codebase already contains Stage 7B-style infrastructure in the Anki read path:
+    - batched `findNotes` / `notesInfo` / `cardsInfo` / `getIntervals`
+    - short-lived in-memory caches in `AnkiReadRepository`
+    - background `ParseProfile` debug logging with backend metrics
+  - The remaining observability gap is on the foreground side, where paragraph extraction, command dispatch/return, and DOM token application/highlighting are not yet timed alongside the background parse metrics.
+- Exact goal of this run:
+  - Confirm the likely bottleneck split between:
+    - Jiten parse
+    - Anki review-state enrichment
+    - foreground DOM/highlighting application
+  - Add only narrow diagnostic instrumentation if needed.
+  - Avoid changing parse semantics or beginning the full Stage 7B optimisation pass in this run.
+- Blockers or prerequisites already recorded:
+  - No active blocker is recorded.
+  - Live browser DevTools capture will still be required for end-to-end validation because the extension runtime is not available directly inside this shell-only environment.
+- Risks/assumptions carried in:
+  - Assumption: existing background metrics may already identify whether Anki enrichment dominates total parse time.
+  - Assumption: if user-visible slowness remains after background parse completes, the foreground `TextHighlighter` pipeline is the next most likely bottleneck.
+  - Risk: adding too much debug output could distort timings, so instrumentation should stay coarse-grained and debug-gated.
+
+### 2026-04-11 - Completed (Stage 7B Diagnostics: Added Foreground Parse Timing For DevTools Investigation)
+- Completed work:
+  - Confirmed the background parser already emits `ParseProfile` timing with backend-specific parse metrics, including Anki lookup request counts.
+  - Added debug-gated foreground parse instrumentation in `BatchController` so DevTools can now separate:
+    - paragraph extraction time
+    - dispatch volume
+    - background wait time before a paragraph result returns
+    - DOM/token application time per paragraph
+  - Kept the diagnostics narrowly scoped and behind the existing debug logger so normal users are unaffected when debug mode is off.
+- Files changed:
+  - `docs/implementation-working-log.md`
+  - `src/apps/batches/batch-controller.ts`
+- Architectural decisions made:
+  - Reused the existing `debug(...)` infrastructure instead of adding a separate diagnostics channel.
+  - Placed the new timing at the foreground batch boundary so it complements the existing background `ParseProfile` log without duplicating parser internals.
+  - Chose coarse paragraph-level metrics rather than per-token tracing to reduce timing distortion.
+- Blockers / open issues:
+  - Live browser DevTools capture is still required; this shell environment cannot itself open the extension in-browser.
+  - This run does not yet prove which phase is dominant on a representative page; it only adds the missing observability needed to answer that cleanly.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` was not run in this diagnostics-only pass.
+- Next recommended step:
+  - Enable debug mode, reproduce a slow parse in-browser, and compare:
+    - `ParseProfile`
+    - `ParseForeground ParagraphsPrepared`
+    - `ParseForeground BatchesDispatched`
+    - `ParseForeground ParagraphApplied`
+  - Use that capture to decide whether the next optimisation should target Anki enrichment, batch sizing/queueing, or `TextHighlighter` DOM work.
+- Handoff:
+  - Background parse timing already existed; foreground batch/apply timing now exists too.
+  - The next run should read this log plus `docs/stages/stage_7B_optimize_anki_mapping_parse_performance.md`, collect one representative DevTools trace with debug mode enabled, and use the combined logs to identify the dominant parse bottleneck before changing performance-critical code.
+
+### 2026-04-11 - Completed (Stage 7B Diagnostics: Added Selector And Anki Enrichment Substep Timing)
+- Completed work:
+  - Added debug-gated backend-selection profiling in `ReviewBackendSelector` so DevTools now reports:
+    - preferred-backend resolution time
+    - availability lookup time
+    - probe duration
+    - whether availability came from cache
+  - Added debug-gated Anki enrichment profiling in `AnkiReviewBackend.getParseReviewStates()` so DevTools now reports:
+    - `readContextReadyMs`
+    - `readonlyConfigMs`
+    - `resolvePlanNoteIdsMs`
+    - `readNotesIndexedMs`
+    - `primeModelTemplatesMs`
+    - `readCardsIndexedMs`
+    - `readIntervalsIndexedMs`
+    - `resolveTermsMs`
+  - Extended the parse metrics object shape so these substep timings can ride alongside the existing request-count metrics already surfaced through `ParseProfile`.
+- Files changed:
+  - `docs/implementation-working-log.md`
+  - `src/background-worker/review-backend/review-backend-selector.ts`
+  - `src/background-worker/review-backend/anki-review-backend.ts`
+  - `src/background-worker/review-backend/anki-review-backend.internal-types.ts`
+- Architectural decisions made:
+  - Kept the new visibility at one log per subsystem (`ParseBackendSelection` and `AnkiParseReviewProfile`) to stay readable in DevTools.
+  - Reused `ParseProfile.backendMetrics` as the aggregation channel for the enrichment substep timings so existing parse-profile captures become more informative without changing parse behaviour.
+  - Instrumented timing at coarse substep boundaries rather than individual repository methods to keep overhead low and maintain a stable view of the serial critical path.
+- Blockers / open issues:
+  - We still need one fresh live trace after these changes to determine which exact Anki substep dominates the current `reviewStateMs`.
+  - `backendSelectionMs` may include expensive config reads and/or availability probing; the new selector log is intended to distinguish those.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` was not run in this diagnostics-only pass.
+- Next recommended step:
+  - Reproduce the same parse and capture:
+    - `ParseBackendSelection`
+    - `AnkiParseReviewProfile`
+    - updated `ParseProfile`
+  - Use those three logs together to decide whether the first optimisation target should be:
+    - selection/probe caching
+    - readonly config loading
+    - AnkiConnect request latency
+    - template priming
+    - or local resolution CPU
+- Handoff:
+  - The diagnostic path is now end-to-end from foreground dispatch to backend selection and Anki enrichment substeps.
+  - The next run should stay in Stage 7B diagnostics, collect one post-instrumentation trace, and only then choose the concrete optimisation slice.
+
 ### 2026-04-09 - Start-of-Run (Stage 11 Follow-up: Preserve Backend Intent For Stale Anki Actions)
 - Stage:
   - Stage 11 - Implement Action Gating and Blocked-State UX.
@@ -4236,3 +4693,175 @@ pm run build passes.
   - Reproduce the suspended/buried case with debug mode enabled and compare `ReviewDebug Popup.adjustGradingButtons`, `ReviewDebug Registry.updateCard`, and `ReviewDebug GradingController.canSubmitGrade` log lines for the same `wordId/readingIndex`.
 - Handoff:
   - The trace points are now in place; the next run should capture the three `ReviewDebug` log events during one bad popup session and use the metadata drift, if any, to identify whether this is a rerender issue or a read-model inconsistency.
+
+### 2026-04-11 - Completed (Stage 7B Shared Scheduler Rollout Fix: Restored Active Default Path)
+- Completed work:
+  - Restored the stable visible parse queue as the default active path for shared `parseVisibleObserver` hosts so the redesign now runs during normal usage instead of requiring manual DevTools flag injection.
+  - Kept the internal runtime override in place so the scheduler can still be forced off or on for targeted validation and containment.
+- Files changed:
+  - `src/apps/parser/parser-feature-flags.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - The robust fix for the rollout gap is to default `stableVisibleParseQueue` to `true` while preserving the existing `window.__JITEN_INTERNAL_FLAGS__` override path.
+  - This keeps the intended Stage 7B architecture live by default without removing the internal escape hatch for host-specific troubleshooting.
+- Blockers / open issues:
+  - The remaining Stage 7B gaps from the latest audit are unchanged by this run: `ManatanMangaParser` still needs the partial-retry hazard fully closed, and the remaining custom parse-visible hosts still do not all share the generic scheduler lifecycle.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Re-audit the remaining custom parse-visible hosts, starting with `ManatanMangaParser`, now that the shared scheduler path is active by default for standard hosts.
+- Handoff:
+  - The shared scheduler is live again by default; use `window.__JITEN_INTERNAL_FLAGS__ = { stableVisibleParseQueue: false }` before parser startup if you need to force the legacy shared path during debugging.
+
+### 2026-04-11 - Start-of-Run (Stage 7B Custom Host Hardening: Close `Manatan` Partial-Retry Hazard)
+- Stage:
+  - Stage 7B - Optimize Anki Mapping Parse Performance.
+- Run intent:
+  - Close the remaining `ManatanMangaParser` lifecycle hole where a box can be reparsed after a partial apply failure simply by re-entering the viewport.
+- Current implementation state:
+  - The shared scheduler is active by default again for standard `parseVisibleObserver` hosts.
+  - `ManatanMangaParser` still manages its own box lifecycle outside the shared scheduler and currently clears `_activeBoxes` on every node error.
+  - `BatchController` now exposes `appliedParagraphCount` on node errors, which gives `Manatan` enough information to distinguish safe no-apply failures from unsafe partial-apply failures.
+- Exact goal of this run:
+  - Prevent `Manatan` boxes from becoming re-eligible after a partial apply failure unless a real text invalidation occurs.
+  - Preserve existing mutation-driven reparsing so true text changes still recover correctly.
+- Blockers or prerequisites already recorded:
+  - No active blocker is recorded.
+  - Existing lint/build verification is green, so this pass can stay tightly scoped to the custom parser lifecycle.
+- Risks/assumptions carried in:
+  - Assumption: for `Manatan`, the safest recovery model is to block viewport-driven retries after partial apply and only clear that block on genuine text mutation or explicit teardown.
+  - Risk: if we over-block, stale failed boxes could remain inert longer than desired; mitigation is to keep mutation-driven `reparseTextBox(...)` as the recovery path.
+
+### 2026-04-11 - Completed (Stage 7B Custom Host Hardening: Closed `Manatan` Partial-Retry Hazard)
+- Completed work:
+  - Hardened `ManatanMangaParser` so boxes that fail after any paragraph was already applied are now blocked from viewport-driven re-registration.
+  - Kept successful and empty parses clearing box state normally.
+  - Preserved mutation-driven recovery by clearing the blocked state inside `reparseTextBox(...)`, so genuine text changes still dismiss the stale node work, remove overlay markup, and re-register the box cleanly.
+- Files changed:
+  - `src/apps/parser/custom-parsers/manatan-manga.parser.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Split `Manatan` box lifecycle into two concerns:
+    - `_activeBoxes` for currently registered/in-flight boxes
+    - `_blockedBoxes` for boxes that experienced unsafe partial-apply failure
+  - Chose not to auto-retry partially applied boxes from visibility changes because the DOM subtree may already be mutated; recovery is now tied to true text invalidation instead.
+- Blockers / open issues:
+  - `Manatan` still uses its bespoke lifecycle rather than the shared `VisibleParseScheduler`, so the broader “all custom parse-visible hosts share one queue model” scope gap remains.
+  - No live browser verification was run in this pass, so the hardening is verified by code-path reasoning plus lint/build only.
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Re-audit the remaining custom parse-visible host scope gap, especially whether `Mokuro` and `Manatan` should be migrated onto the shared scheduler or explicitly documented as permanent bespoke lifecycle implementations.
+- Handoff:
+  - `Manatan` boxes now stay inert after partial apply failure until a real text mutation clears the blocked state via `reparseTextBox(...)`; viewport re-entry alone no longer requeues them.
+
+### 2026-04-11 - Start-of-Run (Stage 7B Custom Host Scope Fix: Move `Manatan` And `Mokuro` Onto Shared Scheduler Semantics)
+- Stage:
+  - Stage 7B - Optimize Anki Mapping Parse Performance.
+- Run intent:
+  - Close the remaining scope gap from the stable visible-queue redesign by giving the remaining custom parse-visible hosts shared scheduler ownership for their actual parse units.
+- Current implementation state:
+  - Standard `parseVisibleObserver` hosts already use `VisibleParseScheduler` by default.
+  - `Ttsu` already uses `VisibleParseScheduler` for chapter parsing.
+  - `Manatan` and `Mokuro` still keep bespoke visible parse registration paths, which means they miss generic scheduler generation handling and shared diagnostics even after recent lifecycle hardening.
+- Exact goal of this run:
+  - Move `Manatan` OCR boxes onto `VisibleParseScheduler` without losing mutation-driven reparsing.
+  - Move `Mokuro` page parsing onto `VisibleParseScheduler` while preserving its page-cycle invalidation and stale-result guard.
+  - Keep host-specific observers and DOM cleanup behavior intact while unifying parse ownership semantics.
+- Blockers or prerequisites already recorded:
+  - No active blocker is recorded.
+  - Existing lint/build verification is green, so this pass can focus on parser lifecycle unification rather than general repair.
+- Risks/assumptions carried in:
+  - Assumption: the right unit for scheduler ownership is the actual parse container (`Manatan` text box, `Mokuro` page), not necessarily the top-level visible host element.
+  - Risk: `Mokuro` page reuse could conflict with scheduler ownership if stale work is not invalidated aggressively enough; mitigation is to keep current page-cycle invalidation and stale-apply guards in place.
+
+### 2026-04-11 - Completed (Stage 7B Custom Host Scope Fix: `Manatan` And `Mokuro` Now Use Shared Scheduler Semantics)
+- Completed work:
+  - Moved `ManatanMangaParser` box parsing onto `VisibleParseScheduler` so OCR boxes now use shared queue ownership, generation handling, retry blocking, and scheduler diagnostics.
+  - Preserved `Manatan` mutation-driven reparsing by treating text changes as scheduler invalidations after clearing stale overlay state and `data-jiten-parsed`.
+  - Added removed-box cleanup in `Manatan` so per-box mutation observers and debounce timers are torn down when boxes leave the DOM.
+  - Moved `MokuroMangaPanel` page parsing onto `VisibleParseScheduler` so page nodes now use shared queue ownership instead of the bespoke `_pages` registration set.
+  - Preserved `Mokuro` page-cycle safety by:
+    - invalidating/removing observed pages on page-turn debounce cancel
+    - rediscovering current pages as mutation-driven work after DOM cleanup
+    - keeping the existing stale-result guard keyed by `_currentId`
+  - Hardened `MokuroParser` panel visibility handling so it no longer recreates panel controllers for an already-managed panel.
+- Files changed:
+  - `src/apps/parser/custom-parsers/manatan-manga.parser.ts`
+  - `src/apps/parser/custom-parsers/mokuro.parser.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Resolved the remaining scope gap by applying shared scheduler semantics at the real parse-unit level for bespoke hosts (`Manatan` box, `Mokuro` page) rather than forcing their top-level host observers through the generic `BaseParser` enter/exit path.
+  - Kept host-specific top-level discovery logic where needed, but made parse ownership itself queue-driven and mutation-invalidated.
+- Blockers / open issues:
+  - `Mokuro` and `Manatan` still retain bespoke top-level observer/controller code because their host integrations do more than simple visible-container parsing; however their actual parse work is now scheduler-owned.
+  - Live browser verification is still recommended for:
+    - `Manatan` OCR box mutation/reparse behaviour
+    - `Mokuro` page turns and stale-result suppression under rapid navigation
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Run a live verification sweep on `Manatan`, `Mokuro`, and `Ttsu` with debug mode enabled to confirm the remaining custom-host paths now emit stable scheduler diagnostics and no longer show scroll-sensitive duplicate parse work.
+- Handoff:
+  - The remaining custom parse-visible hosts now use `VisibleParseScheduler` for their actual parse units even where their top-level host observers remain bespoke; the next run should validate those flows in-browser rather than continue structural changes.
+
+### 2026-04-11 - Start-of-Run (Stage 7B Lifecycle Hardening: Pause/Destroy Semantics For Custom Scheduler Hosts)
+- Stage:
+  - Stage 7B - Optimize Anki Mapping Parse Performance.
+- Run intent:
+  - Fix the remaining lifecycle regressions found in audit: custom scheduler-backed hosts continuing parse activity while parsing is paused, and `Manatan` teardown leaving owned parse work alive.
+- Current implementation state:
+  - `Manatan` and `Mokuro` now use `VisibleParseScheduler` for their real parse units.
+  - `AutomaticParser.disconnectObservers()` only tears down shared observer wiring and the base visible scheduler path.
+  - `VisibleParseScheduler.destroy()` currently drops internal state without dismissing registered/in-flight nodes from `BatchController`.
+- Exact goal of this run:
+  - Add a generic custom-parser pause hook to `AutomaticParser` so bespoke parser-owned observers, schedulers, timers, and listeners can be torn down cleanly when parsing is paused.
+  - Make `VisibleParseScheduler.destroy()` release its owned work robustly instead of just forgetting internal bookkeeping.
+  - Route `Manatan` and `Mokuro` through the new pause cleanup path so unpause can restart from normal parser setup without duplicate listeners or stale scheduler work.
+- Blockers or prerequisites already recorded:
+  - No active blocker is recorded.
+  - Existing lint/build verification is green, so this pass can stay tightly scoped to lifecycle correctness.
+- Risks/assumptions carried in:
+  - Assumption: pause should be treated as a true parser teardown for bespoke host-owned runtime state, with resume rebuilding through normal startup instead of preserving half-alive custom observers.
+  - Risk: over-eager teardown during pause could make resume rely on startup paths that were not previously exercised for these hosts; mitigation is to keep cleanup symmetrical with existing destroy/init responsibilities.
+
+### 2026-04-11 - Completed (Stage 7B Lifecycle Hardening: Fixed Custom Host Pause And Teardown Semantics)
+- Completed work:
+  - Added a generic `AutomaticParser.onParsingPaused()` hook so bespoke automatic parsers can tear down parser-owned runtime state when parsing is paused, instead of only disconnecting the shared visible/added observers.
+  - Updated `VisibleParseScheduler.destroy()` to dismiss owned nodes from `BatchController`, dismiss sentence ownership, and unobserve tracked elements before clearing scheduler state.
+  - Hardened `ManatanMangaParser` pause/destroy handling by extracting one shared runtime teardown path that now:
+    - removes keyboard/mouse/visibility listeners
+    - clears pass-through state
+    - destroys the box scheduler
+    - disconnects and clears per-box mutation observers
+    - clears debounce timers
+    - uninstalls the main-world caret patch
+  - Hardened `MokuroParser` pause/destroy handling by extracting one shared runtime teardown path that now:
+    - stops the polling interval
+    - destroys all active `MokuroMangaPanel` instances
+    - clears panel/controller tracking sets
+- Files changed:
+  - `src/apps/parser/automatic.parser.ts`
+  - `src/apps/parser/visible-parse-scheduler.ts`
+  - `src/apps/parser/custom-parsers/manatan-manga.parser.ts`
+  - `src/apps/parser/custom-parsers/mokuro.parser.ts`
+  - `docs/implementation-working-log.md`
+- Architectural decisions made:
+  - Treated parsing pause as a real teardown boundary for bespoke parser-owned runtime state, with resume rebuilding through normal observer/init startup rather than trying to preserve partially alive custom schedulers.
+  - Made scheduler destruction release owned parse work explicitly instead of relying on callers to remember to dismiss nodes separately.
+- Blockers / open issues:
+  - No new blocker was introduced.
+  - Live browser verification is still recommended to confirm:
+    - `Manatan` no longer parses while paused and resumes cleanly after unpause
+    - `Mokuro` page turns do not enqueue parse work while paused and restart cleanly after unpause
+    - destroying either parser during in-flight work no longer applies stale results into orphaned DOM
+- Verification status:
+  - `npm run lint` passes.
+  - `npm run build` passes.
+- Next recommended step:
+  - Run a pause/unpause and teardown verification sweep on `Manatan` and `Mokuro` with debug mode enabled to confirm there is no parse activity during pause and no post-destroy stale apply.
+- Handoff:
+  - Custom scheduler-backed hosts now participate in pause teardown through `AutomaticParser.onParsingPaused()`, and `VisibleParseScheduler.destroy()` now actually releases owned parse work instead of just dropping bookkeeping.

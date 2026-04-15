@@ -29,6 +29,7 @@ export class AnkiReadRepository {
   private readonly _cardsInfoCache = new Map<number, CacheEntry<AnkiCardInfo>>();
   private readonly _intervalsCache = new Map<number, CacheEntry<number>>();
   private readonly _modelTemplatesCache = new Map<string, CacheEntry<AnkiModelTemplate[]>>();
+  private readonly _inFlightModelTemplates = new Map<string, Promise<AnkiModelTemplate[]>>();
 
   public invalidateAll(): void {
     this._findNotesCache.clear();
@@ -36,6 +37,7 @@ export class AnkiReadRepository {
     this._cardsInfoCache.clear();
     this._intervalsCache.clear();
     this._modelTemplatesCache.clear();
+    this._inFlightModelTemplates.clear();
   }
 
   public invalidateCard(cardId: number): void {
@@ -271,23 +273,13 @@ export class AnkiReadRepository {
   }
 
   public async primeModelTemplates(modelNames: string[]): Promise<void> {
-    const now = Date.now();
-    const missingModels = modelNames.filter((modelName) => {
-      const cached = this._modelTemplatesCache.get(modelName);
+    await Promise.all(modelNames.map((modelName) => this.ensureModelTemplates(modelName)));
+  }
 
-      return !cached || cached.expiresAt <= now;
-    });
+  public async getTemplateNameLoaded(modelName: string, ord: number): Promise<string | undefined> {
+    const templates = await this.ensureModelTemplates(modelName);
 
-    await Promise.all(
-      missingModels.map(async (modelName) => {
-        const templates = await getModelTemplates(modelName, { showToastOnError: false });
-
-        this._modelTemplatesCache.set(modelName, {
-          expiresAt: now + LOOKUP_CACHE_TTL_MS,
-          value: templates,
-        });
-      }),
-    );
+    return templates.find((template) => template.ord === ord)?.name;
   }
 
   public getTemplateName(modelName: string, ord: number): string | undefined {
@@ -295,6 +287,38 @@ export class AnkiReadRepository {
     const templates = cached?.value;
 
     return templates?.find((template) => template.ord === ord)?.name;
+  }
+
+  private async ensureModelTemplates(modelName: string): Promise<AnkiModelTemplate[]> {
+    const now = Date.now();
+    const cached = this._modelTemplatesCache.get(modelName);
+
+    if (cached && cached.expiresAt > now) {
+      return cached.value;
+    }
+
+    let inFlight = this._inFlightModelTemplates.get(modelName);
+
+    if (!inFlight) {
+      inFlight = (async (): Promise<AnkiModelTemplate[]> => {
+        const templates = await getModelTemplates(modelName, { showToastOnError: false });
+
+        this._modelTemplatesCache.set(modelName, {
+          expiresAt: now + LOOKUP_CACHE_TTL_MS,
+          value: templates,
+        });
+
+        return templates;
+      })();
+
+      this._inFlightModelTemplates.set(modelName, inFlight);
+    }
+
+    try {
+      return await inFlight;
+    } finally {
+      this._inFlightModelTemplates.delete(modelName);
+    }
   }
 
   private async resolvePendingQueriesWithMulti(

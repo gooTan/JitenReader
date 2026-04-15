@@ -3,27 +3,73 @@ import { applyTokens } from '../../batches/apply-tokens';
 import { Paragraph } from '../../batches/types';
 import { Registry } from '../../integration/registry';
 import { AutomaticParser } from '../automatic.parser';
+import { VisibleParseScheduler } from '../visible-parse-scheduler';
 import { getMokuroParagraphs } from './mokuro/get-mokuro-paragraphs';
 
 class MokuroMangaPanel {
   private _imageContainerId = 'page-num';
-  private _imageContainer: HTMLElement;
-  private _imageObserver: MutationObserver;
+  private _imageContainer?: HTMLElement;
+  private _imageObserver?: MutationObserver;
+  private _pageObserver: IntersectionObserver;
+  private _pageScheduler: VisibleParseScheduler;
 
   private _debounceTimeout: NodeJS.Timeout | undefined;
   private _debounceTime = 500;
   private _currentId = 0;
-
-  private _pages = new Set<HTMLElement>();
+  private _observedPages = new Set<HTMLElement>();
 
   constructor(private _panel: HTMLElement) {
+    this._pageObserver = new IntersectionObserver((entries) => {
+      const visiblePages = entries
+        .filter((entry) => entry.isIntersecting)
+        .map((entry) => entry.target);
+      const hiddenPages = entries
+        .filter((entry) => !entry.isIntersecting)
+        .map((entry) => entry.target);
+
+      if (visiblePages.length) {
+        this._pageScheduler.discover(visiblePages, 'visibility');
+      }
+
+      if (hiddenPages.length) {
+        this._pageScheduler.demote(hiddenPages);
+      }
+    });
+    this._pageScheduler = new VisibleParseScheduler({
+      observer: this._pageObserver,
+      createRegisterOptions: (): {
+        getParagraphsFn: typeof getMokuroParagraphs;
+        applyFn: (paragraph: Paragraph, tokens: JitenToken[]) => void;
+      } => {
+        const currentId = this._currentId;
+
+        return {
+          // We create fragments manually, since mokuro puts every line in a separate <p>aragraph and hides them
+          getParagraphsFn: getMokuroParagraphs,
+          // Because mokuro reuses nodes, a token may already be altered when the data from jiten return.
+          // Thus we track on which page change cycle we are and don't apply tokens to the wrong page
+          applyFn: (paragraph: Paragraph, tokens: JitenToken[]): void => {
+            if (currentId === this._currentId) {
+              void applyTokens(paragraph, tokens);
+            }
+          },
+        };
+      },
+    });
     this.setupImageObserver();
 
     this.triggerParse();
   }
 
   public destroy(): void {
+    if (this._debounceTimeout) {
+      clearTimeout(this._debounceTimeout);
+      this._debounceTimeout = undefined;
+    }
+
     this.cancelParse();
+    this._pageObserver.disconnect();
+    this._pageScheduler.destroy();
 
     this._imageObserver?.disconnect();
   }
@@ -88,11 +134,8 @@ class MokuroMangaPanel {
   }
 
   private cancelParse(): void {
-    this._pages.forEach((page) => {
-      Registry.batchController.dismissNode(page);
-
-      this._pages.delete(page);
-    });
+    this._pageScheduler.removeElements([...this._observedPages]);
+    this._observedPages.clear();
   }
 
   private cleanup(): void {
@@ -124,28 +167,28 @@ class MokuroMangaPanel {
   }
 
   private parse(): void {
-    this._panel.querySelectorAll<HTMLElement>(':scope > div > div.relative').forEach((page) => {
-      if (this._pages.has(page)) {
-        return;
+    const pages = Array.from(
+      this._panel.querySelectorAll<HTMLElement>(':scope > div > div.relative'),
+    );
+    const nextPages = new Set(pages);
+    const removedPages = [...this._observedPages].filter((page) => !nextPages.has(page));
+
+    if (removedPages.length) {
+      this._pageScheduler.removeElements(removedPages);
+
+      for (const removedPage of removedPages) {
+        this._observedPages.delete(removedPage);
       }
+    }
 
-      const currentId = this._currentId;
+    for (const page of pages) {
+      if (!this._observedPages.has(page)) {
+        this._pageObserver.observe(page);
+        this._observedPages.add(page);
+      }
+    }
 
-      this._pages.add(page);
-      Registry.batchController.registerNode(page, {
-        // We create fragments manually, since mokuro puts every line in a separate <p>aragraph and hides them
-        getParagraphsFn: getMokuroParagraphs,
-        // Because mokuro reuses nodes, a token may already be altered when the data from jiten return.
-        // Thus we track on which page change cycle we are and don't apply tokens to the wrong page
-        applyFn: (paragraph: Paragraph, tokens: JitenToken[]) => {
-          if (currentId === this._currentId) {
-            void applyTokens(paragraph, tokens);
-          }
-        },
-      });
-    });
-
-    Registry.batchController.parseBatches(() => this._pages.clear());
+    this._pageScheduler.discover(pages, 'mutation');
   }
 }
 
@@ -164,10 +207,7 @@ export class MokuroParser extends AutomaticParser {
   private _observedElements = new Set<HTMLElement>();
 
   public override destroy(): void {
-    clearInterval(this._pollIntervalId);
-    this._mangaPanels.forEach((instance) => instance.destroy());
-    this._mangaPanels.clear();
-    this._observedElements.clear();
+    this.teardownRuntimeState();
     super.destroy();
   }
 
@@ -214,6 +254,10 @@ export class MokuroParser extends AutomaticParser {
     this._pollIntervalId = setInterval(checkForPanel, 500);
   }
 
+  protected override onParsingPaused(): void {
+    this.teardownRuntimeState();
+  }
+
   /**
    * @override we do not need a complex filter for the visible observer
    */
@@ -228,6 +272,10 @@ export class MokuroParser extends AutomaticParser {
    */
   protected visibleObserverOnEnter(elements: HTMLElement[]): void {
     for (const element of elements) {
+      if (this._mangaPanels.has(element)) {
+        continue;
+      }
+
       this._mangaPanels.set(element, new MokuroMangaPanel(element));
     }
 
@@ -241,10 +289,7 @@ export class MokuroParser extends AutomaticParser {
    * @param {HTMLElement[]} elements The exited manga panels
    */
   protected visibleObserverOnExit(elements: HTMLElement[]): void {
-    for (const element of elements) {
-      this._mangaPanels.get(element)?.destroy();
-      this._mangaPanels.delete(element);
-    }
+    void elements;
   }
 
   /**
@@ -262,5 +307,13 @@ export class MokuroParser extends AutomaticParser {
       this._visibleObserver?.observe(element);
       this._observedElements.add(element);
     }
+  }
+
+  private teardownRuntimeState(): void {
+    clearInterval(this._pollIntervalId);
+    this._pollIntervalId = undefined;
+    this._mangaPanels.forEach((instance) => instance.destroy());
+    this._mangaPanels.clear();
+    this._observedElements.clear();
   }
 }

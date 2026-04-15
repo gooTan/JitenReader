@@ -5,6 +5,7 @@ import { JitenToken } from '@shared/jiten/types';
 import { Paragraph } from '../../batches/types';
 import { Registry } from '../../integration/registry';
 import { AutomaticParser } from '../automatic.parser';
+import { VisibleParseScheduler } from '../visible-parse-scheduler';
 import { getManatanMangaParagraphs } from './manatan-manga/get-manatan-manga-paragraphs';
 import { manatanMangaApplyTokens } from './manatan-manga/manatan-manga-apply-tokens';
 
@@ -35,45 +36,10 @@ export class ManatanMangaParser extends AutomaticParser {
   private _auxclickHandler?: (e: MouseEvent) => void;
   private _blurHandler?: () => void;
   private _visibilityHandler?: () => void;
+  private _boxScheduler?: VisibleParseScheduler;
 
   public override destroy(): void {
-    if (this._keydownHandler) {
-      document.removeEventListener('keydown', this._keydownHandler);
-    }
-
-    if (this._keyupHandler) {
-      document.removeEventListener('keyup', this._keyupHandler);
-    }
-
-    if (this._mousedownHandler) {
-      document.removeEventListener('mousedown', this._mousedownHandler, true);
-    }
-
-    if (this._mouseupHandler) {
-      document.removeEventListener('mouseup', this._mouseupHandler, true);
-    }
-
-    if (this._auxclickHandler) {
-      document.removeEventListener('auxclick', this._auxclickHandler, true);
-    }
-
-    if (this._blurHandler) {
-      window.removeEventListener('blur', this._blurHandler);
-    }
-
-    if (this._visibilityHandler) {
-      document.removeEventListener('visibilitychange', this._visibilityHandler);
-    }
-
-    document.body.classList.remove(ManatanMangaParser.YOMITAN_PASS_THROUGH_CLASS);
-    this._pressedCodes.clear();
-    this._keyboardPassThrough = false;
-    this._middleClickPassThrough = false;
-    this.sendMainWorldPatchControl('uninstall');
-    this._textObservers.forEach((obs) => obs.disconnect());
-    this._textObservers.clear();
-    this._debounceTimers.forEach((t) => clearTimeout(t));
-    this._debounceTimers.clear();
+    this.teardownRuntimeState();
     super.destroy();
   }
 
@@ -84,41 +50,61 @@ export class ManatanMangaParser extends AutomaticParser {
     void this.loadPopupKeybinds();
   }
 
+  protected override onParsingPaused(): void {
+    this.teardownRuntimeState();
+  }
+
   protected override setupVisibleObserver(): void {
-    this._visibleObserver = this.getParseVisibleObserver();
+    this._visibleObserver = this.getVisibleObserver(
+      (elements) => this.handleVisibleBoxes(elements),
+      (elements) => this._boxScheduler?.demote(elements),
+    );
+    this._boxScheduler = new VisibleParseScheduler({
+      observer: this._visibleObserver,
+      createRegisterOptions: (): {
+        collapseWhitespace: boolean | undefined;
+        getParagraphsFn: typeof getManatanMangaParagraphs;
+        applyFn: (paragraph: Paragraph, tokens: JitenToken[]) => void;
+      } => ({
+        collapseWhitespace: this._meta.collapseWhitespace,
+        getParagraphsFn: getManatanMangaParagraphs,
+        applyFn: (paragraph: Paragraph, tokens: JitenToken[]): void => {
+          manatanMangaApplyTokens(paragraph, tokens);
+        },
+      }),
+    });
   }
 
-  protected override visibleObserverOnEnter(elements: Element[]): void {
-    let registered = false;
-
+  protected override addedObserverCallback(
+    elements: HTMLElement[],
+    source: 'initial' | 'mutation' = 'mutation',
+  ): void {
     for (const element of elements) {
-      const box = element as HTMLElement;
-
-      if (box.hasAttribute('data-jiten-parsed')) {
-        continue;
-      }
-
-      this.watchTextChanges(box);
-      this.registerBox(box);
-      registered = true;
-    }
-
-    if (registered) {
-      Registry.batchController.parseBatches();
-      this.installAppStyles();
-    }
-  }
-
-  protected override visibleObserverOnExit(elements: Element[]): void {
-    for (const element of elements) {
-      Registry.batchController.dismissNode(element);
-    }
-  }
-
-  protected override addedObserverCallback(elements: HTMLElement[]): void {
-    for (const element of elements) {
+      this.watchTextChanges(element);
       this._visibleObserver?.observe(element);
     }
+
+    this._boxScheduler?.discover(elements, source);
+  }
+
+  protected override removedObserverCallback(
+    elements: HTMLElement[],
+    source: 'initial' | 'mutation' = 'mutation',
+  ): void {
+    for (const element of elements) {
+      this._textObservers.get(element)?.disconnect();
+      this._textObservers.delete(element);
+
+      const debounceTimer = this._debounceTimers.get(element);
+
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+        this._debounceTimers.delete(element);
+      }
+    }
+
+    this._boxScheduler?.removeElements(elements);
+    super.removedObserverCallback(elements, source);
   }
 
   private installMainWorldCaretPatch(): void {
@@ -268,15 +254,6 @@ export class ManatanMangaParser extends AutomaticParser {
     );
   }
 
-  private registerBox(box: HTMLElement): void {
-    Registry.batchController.registerNode(box, {
-      getParagraphsFn: getManatanMangaParagraphs,
-      applyFn: (paragraph: Paragraph, tokens: JitenToken[]) => {
-        manatanMangaApplyTokens(paragraph, tokens);
-      },
-    });
-  }
-
   private watchTextChanges(box: HTMLElement): void {
     if (this._textObservers.has(box)) {
       return;
@@ -330,8 +307,64 @@ export class ManatanMangaParser extends AutomaticParser {
     box.querySelector('.jiten-manatan-overlay')?.remove();
     box.removeAttribute('data-jiten-parsed');
 
-    Registry.batchController.dismissNode(box);
-    this.registerBox(box);
-    Registry.batchController.parseBatches();
+    this._visibleObserver?.observe(box);
+    this._boxScheduler?.discover([box], 'mutation');
+  }
+
+  private handleVisibleBoxes(elements: Element[]): void {
+    const boxes = elements.filter((element) => !element.hasAttribute('data-jiten-parsed'));
+
+    if (!boxes.length) {
+      return;
+    }
+
+    for (const box of boxes) {
+      this.watchTextChanges(box as HTMLElement);
+    }
+
+    this.installAppStyles();
+    this._boxScheduler?.discover(boxes, 'visibility');
+  }
+
+  private teardownRuntimeState(): void {
+    if (this._keydownHandler) {
+      document.removeEventListener('keydown', this._keydownHandler);
+    }
+
+    if (this._keyupHandler) {
+      document.removeEventListener('keyup', this._keyupHandler);
+    }
+
+    if (this._mousedownHandler) {
+      document.removeEventListener('mousedown', this._mousedownHandler, true);
+    }
+
+    if (this._mouseupHandler) {
+      document.removeEventListener('mouseup', this._mouseupHandler, true);
+    }
+
+    if (this._auxclickHandler) {
+      document.removeEventListener('auxclick', this._auxclickHandler, true);
+    }
+
+    if (this._blurHandler) {
+      window.removeEventListener('blur', this._blurHandler);
+    }
+
+    if (this._visibilityHandler) {
+      document.removeEventListener('visibilitychange', this._visibilityHandler);
+    }
+
+    document.body.classList.remove(ManatanMangaParser.YOMITAN_PASS_THROUGH_CLASS);
+    this._pressedCodes.clear();
+    this._keyboardPassThrough = false;
+    this._middleClickPassThrough = false;
+    this._boxScheduler?.destroy();
+    this._boxScheduler = undefined;
+    this.sendMainWorldPatchControl('uninstall');
+    this._textObservers.forEach((obs) => obs.disconnect());
+    this._textObservers.clear();
+    this._debounceTimers.forEach((t) => clearTimeout(t));
+    this._debounceTimers.clear();
   }
 }

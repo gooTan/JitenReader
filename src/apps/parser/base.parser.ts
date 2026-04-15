@@ -2,12 +2,22 @@ import { debug } from '@shared/debug';
 import { getStyleUrl } from '@shared/extension/get-style-url';
 import { HostMeta } from '@shared/host-meta/types';
 import { getParagraphs } from '../batches/get-paragraphs';
+import { RegisterOptions } from '../batches/types';
 import { Registry } from '../integration/registry';
+import { isParserFeatureEnabled } from './parser-feature-flags';
+import { VisibleParseScheduler } from './visible-parse-scheduler';
 
 export abstract class BaseParser {
   protected _destroyed = false;
   protected _hasInjectedClass = false;
   protected getParagraphsFn?: typeof getParagraphs;
+  protected _visibleParseScheduler?: VisibleParseScheduler;
+  protected _visibleFlushHandle?: number;
+  protected _visibleInFlightElements = new Set<Element>();
+  protected _visibleParsedElements = new Set<Element>();
+  protected _visiblePendingElements = new Set<Element>();
+
+  private static readonly VISIBLE_PARSE_DEBOUNCE_MS = 50;
 
   /** The root element to parse */
   protected get root(): HTMLElement | null {
@@ -34,6 +44,7 @@ export abstract class BaseParser {
   constructor(protected _meta: HostMeta) {}
 
   public destroy(): void {
+    this.clearVisibleParseState();
     this._destroyed = true;
   }
 
@@ -125,8 +136,8 @@ export abstract class BaseParser {
     notifyFor: string,
     checkNested: string | undefined,
     config: MutationObserverInit,
-    onAdded: (nodes: HTMLElement[]) => void,
-    onRemoved: (nodes: HTMLElement[]) => void,
+    onAdded: (nodes: HTMLElement[], source: 'initial' | 'mutation') => void,
+    onRemoved: (nodes: HTMLElement[], source: 'initial' | 'mutation') => void,
   ): MutationObserver {
     debug('getAddedObserver', { observeFrom, notifyFor, config });
 
@@ -141,8 +152,8 @@ export abstract class BaseParser {
     if (initialNodes.length) {
       debug('getAddedObserver: Initial nodes found:', initialNodes);
 
-      onAdded(initialNodes);
-      this.watchForNodeRemove(initialNodes, onRemoved);
+      onAdded(initialNodes, 'initial');
+      this.watchForNodeRemove(initialNodes, (nodes) => onRemoved(nodes, 'mutation'));
     }
 
     const observer = new MutationObserver((mutations) => {
@@ -202,7 +213,7 @@ export abstract class BaseParser {
 
         debug('getAddedObserver: Matching nodes added:', relevantNodes);
 
-        onAdded(relevantNodes);
+        onAdded(relevantNodes, 'mutation');
       }
 
       const removedNodes = childList
@@ -213,7 +224,7 @@ export abstract class BaseParser {
       if (removedNodes.length && onRemoved) {
         debug('getAddedObserver: Matching nodes removed:', removedNodes);
 
-        onRemoved(removedNodes);
+        onRemoved(removedNodes, 'mutation');
       }
     });
 
@@ -304,6 +315,19 @@ export abstract class BaseParser {
       (elements) => this.visibleObserverOnExit(elements, observer),
     );
 
+    if (this.usesStableVisibleParseScheduler()) {
+      if (this._visibleParseScheduler) {
+        this._visibleParseScheduler.setObserver(observer);
+        this._visibleParseScheduler.resume(observer);
+      } else {
+        this._visibleParseScheduler = new VisibleParseScheduler({
+          observer,
+          createRegisterOptions: (): RegisterOptions =>
+            this.createVisibleParseRegisterOptions(filter),
+        });
+      }
+    }
+
     return observer;
   }
 
@@ -322,18 +346,28 @@ export abstract class BaseParser {
     observer: IntersectionObserver,
     filter?: (node: HTMLElement | Text) => boolean,
   ): void {
-    const { batchController } = Registry;
+    if (this._visibleParseScheduler) {
+      debug('visibleObserverOnEnter', elements);
+      this.installAppStyles();
+      this._visibleParseScheduler.discover(elements, 'visibility');
+
+      return;
+    }
 
     debug('visibleObserverOnEnter', elements);
     this.installAppStyles();
 
-    batchController.registerNodes(elements, {
-      filter,
-      onEmpty: (e) => e instanceof Element && observer.unobserve(e),
-      getParagraphsFn: this.getParagraphsFn,
-      collapseWhitespace: this._meta.collapseWhitespace,
-    });
-    batchController.parseBatches();
+    const queueable = elements.filter(
+      (element) =>
+        !this._visibleParsedElements.has(element) && !this._visibleInFlightElements.has(element),
+    );
+
+    if (!queueable.length) {
+      return;
+    }
+
+    queueable.forEach((element) => this._visiblePendingElements.add(element));
+    this.scheduleVisibleParseFlush(observer, filter);
   }
 
   /**
@@ -346,11 +380,22 @@ export abstract class BaseParser {
    * @param {IntersectionObserver} _observer The observer instance
    */
   protected visibleObserverOnExit(elements: Element[], _observer: IntersectionObserver): void {
+    if (this._visibleParseScheduler) {
+      debug('visibleObserverOnExit', elements);
+      this._visibleParseScheduler.demote(elements);
+
+      return;
+    }
+
     const { batchController } = Registry;
 
     debug('visibleObserverOnExit', elements);
 
-    elements.forEach((node) => batchController.dismissNode(node));
+    elements.forEach((node) => {
+      this._visiblePendingElements.delete(node);
+      this._visibleInFlightElements.delete(node);
+      batchController.dismissNode(node);
+    });
   }
 
   protected installAppStyles(): void {
@@ -382,5 +427,117 @@ export abstract class BaseParser {
 
   protected pascalCaseToKebabCase(str: string): string {
     return str.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+  }
+
+  protected createVisibleParseRegisterOptions(
+    filter?: (node: HTMLElement | Text) => boolean,
+  ): RegisterOptions {
+    return {
+      filter,
+      getParagraphsFn: this.getParagraphsFn,
+      collapseWhitespace: this._meta.collapseWhitespace,
+    };
+  }
+
+  protected clearVisibleParseState(): void {
+    this._visibleParseScheduler?.destroy();
+    this._visibleParseScheduler = undefined;
+    this.cancelVisibleParseFlush();
+    this._visibleInFlightElements.clear();
+    this._visibleParsedElements.clear();
+  }
+
+  protected cancelVisibleParseFlush(): void {
+    if (this._visibleParseScheduler) {
+      this._visibleParseScheduler.pause();
+
+      return;
+    }
+
+    if (this._visibleFlushHandle !== undefined) {
+      clearTimeout(this._visibleFlushHandle);
+      this._visibleFlushHandle = undefined;
+    }
+
+    this._visiblePendingElements.clear();
+  }
+
+  private scheduleVisibleParseFlush(
+    observer: IntersectionObserver,
+    filter?: (node: HTMLElement | Text) => boolean,
+  ): void {
+    if (this._visibleFlushHandle !== undefined) {
+      return;
+    }
+
+    this._visibleFlushHandle = window.setTimeout(() => {
+      this._visibleFlushHandle = undefined;
+      this.flushVisibleParseQueue(observer, filter);
+    }, BaseParser.VISIBLE_PARSE_DEBOUNCE_MS);
+  }
+
+  private flushVisibleParseQueue(
+    observer: IntersectionObserver,
+    filter?: (node: HTMLElement | Text) => boolean,
+  ): void {
+    if (this._destroyed || this._visiblePendingElements.size === 0) {
+      return;
+    }
+
+    const { batchController } = Registry;
+    const elements = Array.from(this._visiblePendingElements).filter(
+      (element) =>
+        element.isConnected &&
+        !this._visibleParsedElements.has(element) &&
+        !this._visibleInFlightElements.has(element),
+    );
+
+    this._visiblePendingElements.clear();
+
+    if (!elements.length) {
+      return;
+    }
+
+    debug('flushVisibleParseQueue', {
+      elementCount: elements.length,
+    });
+
+    for (const element of elements) {
+      this._visibleInFlightElements.add(element);
+      batchController.registerNode(element, {
+        filter,
+        onEmpty: (node) => {
+          if (!(node instanceof Element)) {
+            return;
+          }
+
+          this._visibleInFlightElements.delete(node);
+          this._visibleParsedElements.add(node);
+          observer.unobserve(node);
+        },
+        getParagraphsFn: this.getParagraphsFn,
+        collapseWhitespace: this._meta.collapseWhitespace,
+        onComplete: () => {
+          this._visibleInFlightElements.delete(element);
+          this._visibleParsedElements.add(element);
+          observer.unobserve(element);
+        },
+      });
+    }
+
+    batchController.parseBatches();
+  }
+
+  private usesStableVisibleParseScheduler(): boolean {
+    if (!isParserFeatureEnabled('stableVisibleParseQueue')) {
+      return false;
+    }
+
+    const prototype = Object.getPrototypeOf(this) as BaseParser;
+
+    return (
+      prototype.visibleObserverOnEnter === BaseParser.prototype.visibleObserverOnEnter &&
+      prototype.visibleObserverOnExit === BaseParser.prototype.visibleObserverOnExit
+    );
   }
 }

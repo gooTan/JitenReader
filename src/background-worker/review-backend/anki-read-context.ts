@@ -1,8 +1,7 @@
 import { AnkiCardInfo } from '@shared/anki/api.types';
-import { findNotes } from '@shared/anki/find-notes';
-import { getApiVersion } from '@shared/anki/get-api-version';
 import { getCollectionCreationTime } from '@shared/anki/get-collection-creation-time';
 import { getConfiguration } from '@shared/configuration/get-configuration';
+import { AnkiReadinessService } from './anki-readiness-service';
 import {
   ANKI_FALLBACK_ROLLOVER_HOUR,
   ANKI_QUEUE_LEARNING,
@@ -10,26 +9,23 @@ import {
   ANKI_QUEUE_RELEARNING,
   ANKI_QUEUE_REVIEW,
   COLLECTION_CREATION_CACHE_TTL_MS,
-  READ_PROBE_CACHE_TTL_MS,
   ROLLOVER_CACHE_TTL_MS,
 } from './anki-review-backend.constants';
 
 export class AnkiReadContext {
   private _cachedCollectionCreatedAtExpiresAt = 0;
   private _cachedCollectionCreatedAtMs?: number;
-  private _cachedReadProbeExpiresAt = 0;
   private _cachedRolloverHourExpiresAt = 0;
   private _cachedRolloverHour = ANKI_FALLBACK_ROLLOVER_HOUR;
   private _inFlightCollectionCreatedAtProbe?: Promise<number | undefined>;
-  private _inFlightReadProbe?: Promise<void>;
   private _inFlightRolloverProbe?: Promise<number>;
 
+  public constructor(private readonly _readinessService: AnkiReadinessService) {}
+
   public invalidate(): void {
-    this._cachedReadProbeExpiresAt = 0;
     this._cachedRolloverHourExpiresAt = 0;
     this._cachedCollectionCreatedAtExpiresAt = 0;
     this._cachedCollectionCreatedAtMs = undefined;
-    this._inFlightReadProbe = undefined;
     this._inFlightRolloverProbe = undefined;
     this._inFlightCollectionCreatedAtProbe = undefined;
   }
@@ -60,25 +56,7 @@ export class AnkiReadContext {
   }
 
   private async ensureReadOnlyPathReady(): Promise<void> {
-    const now = Date.now();
-
-    if (this._cachedReadProbeExpiresAt > now) {
-      return;
-    }
-
-    if (!this._inFlightReadProbe) {
-      this._inFlightReadProbe = (async (): Promise<void> => {
-        await getApiVersion({ showToastOnError: false });
-        await findNotes('nid:0', { showToastOnError: false });
-        this._cachedReadProbeExpiresAt = Date.now() + READ_PROBE_CACHE_TTL_MS;
-      })();
-    }
-
-    try {
-      await this._inFlightReadProbe;
-    } finally {
-      this._inFlightReadProbe = undefined;
-    }
+    await this._readinessService.ensureReady();
   }
 
   private async ensureRolloverHourLoaded(): Promise<void> {
@@ -115,6 +93,15 @@ export class AnkiReadContext {
     const now = Date.now();
 
     if (this._cachedCollectionCreatedAtExpiresAt > now) {
+      return;
+    }
+
+    const cachedCollectionCreatedAtMs = this._readinessService.getCachedCollectionCreatedAtMs();
+
+    if (cachedCollectionCreatedAtMs !== undefined) {
+      this._cachedCollectionCreatedAtMs = cachedCollectionCreatedAtMs;
+      this._cachedCollectionCreatedAtExpiresAt = now + COLLECTION_CREATION_CACHE_TTL_MS;
+
       return;
     }
 

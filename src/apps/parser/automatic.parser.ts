@@ -67,8 +67,10 @@ export class AutomaticParser extends BaseParser {
   protected disconnectObservers(): void {
     debug('AutomaticParser: Disconnecting observers due to pause');
 
+    this.cancelVisibleParseFlush();
     this._visibleObserver?.disconnect();
     this._addedObserver?.disconnect();
+    this.onParsingPaused();
   }
 
   protected reconnectObservers(): void {
@@ -82,6 +84,10 @@ export class AutomaticParser extends BaseParser {
   }
 
   protected init(): void {
+    /* NOP */
+  }
+
+  protected onParsingPaused(): void {
     /* NOP */
   }
 
@@ -128,8 +134,8 @@ export class AutomaticParser extends BaseParser {
       this._meta.addedObserver!.notifyFor,
       this._meta.addedObserver!.checkNested,
       this._meta.addedObserver!.config ?? { childList: true, subtree: true },
-      (nodes) => this.addedObserverCallback(nodes),
-      (nodes) => this.removedObserverCallback(nodes),
+      (nodes, source) => this.addedObserverCallback(nodes, source),
+      (nodes, source) => this.removedObserverCallback(nodes, source),
     );
   }
 
@@ -139,7 +145,17 @@ export class AutomaticParser extends BaseParser {
    * @param {HTMLElement[]} nodes The added nodes
    * @returns {void}
    */
-  protected addedObserverCallback(nodes: HTMLElement[]): void {
+  protected addedObserverCallback(
+    nodes: HTMLElement[],
+    source: 'initial' | 'mutation' = 'mutation',
+  ): void {
+    if (this._visibleParseScheduler) {
+      nodes.forEach((node) => this._visibleObserver?.observe(node));
+      this._visibleParseScheduler.discover(nodes, source);
+
+      return;
+    }
+
     if (!this._visibleObserver) {
       return this.parseNodes(nodes, this.filter);
     }
@@ -147,10 +163,15 @@ export class AutomaticParser extends BaseParser {
     nodes.forEach((node) => this._visibleObserver?.observe(node));
   }
 
-  protected removedObserverCallback(nodes: HTMLElement[]): void {
+  protected removedObserverCallback(
+    nodes: HTMLElement[],
+    _source: 'initial' | 'mutation' = 'mutation',
+  ): void {
     nodes.forEach((node) => {
       Registry.sentenceManager.dismissContainer(node);
     });
+
+    this._visibleParseScheduler?.removeElements(nodes);
 
     if (!this._visibleObserver) {
       return;

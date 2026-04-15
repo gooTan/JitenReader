@@ -2,6 +2,7 @@ import { GetAnkiCreatePathCapability } from '@shared/anki/create-path-capability
 import { getReadonlyDiscoverWordConfigurationSummary } from '@shared/anki/readonly-config';
 import { targetedReviewWrite } from '@shared/anki/targeted-review-write';
 import { getConfiguration } from '@shared/configuration/get-configuration';
+import { debug } from '@shared/debug';
 import { createReviewMetadata } from '@shared/jiten/create-review-metadata';
 import {
   GetBlockedReviewabilityError,
@@ -25,6 +26,7 @@ import {
   getUniqueTermContexts,
 } from './anki-read-planner';
 import { AnkiReadRepository } from './anki-read-repository';
+import { AnkiReadinessService } from './anki-readiness-service';
 import { ANKI_REVIEW_BACKEND_CAPABILITIES } from './anki-review-backend.constants';
 import { AnkiParseLookupMetrics } from './anki-review-backend.internal-types';
 import {
@@ -48,14 +50,19 @@ import {
 
 export class AnkiReviewBackend implements ReviewBackend {
   private _lastParseMetrics?: AnkiParseLookupMetrics;
-  private readonly _readContext = new AnkiReadContext();
+  private readonly _readContext: AnkiReadContext;
   private readonly _repository = new AnkiReadRepository();
+
+  public constructor(private readonly _readinessService: AnkiReadinessService) {
+    this._readContext = new AnkiReadContext(_readinessService);
+  }
 
   public getCapabilities(): ReviewBackendCapabilities {
     return ANKI_REVIEW_BACKEND_CAPABILITIES;
   }
 
   public invalidateCaches(): void {
+    this._readinessService.invalidate();
     this._readContext.invalidate();
     this._repository.invalidateAll();
   }
@@ -63,11 +70,24 @@ export class AnkiReviewBackend implements ReviewBackend {
   public async getParseReviewStates(
     vocabulary: JitenRawVocabulary[],
   ): Promise<ReviewTermResolutionMap> {
+    const readContextReadyStartedAt = performance.now();
+
     await this._readContext.ensureReady();
+    const readContextReadyMs = performance.now() - readContextReadyStartedAt;
+
     const termContexts = getUniqueTermContexts(vocabulary);
+    const readonlyConfigStartedAt = performance.now();
     const readonlyConfigSummary = await this.getReadonlyConfigSummary();
+    const readonlyConfigMs = performance.now() - readonlyConfigStartedAt;
 
     if (readonlyConfigSummary.status !== 'ready') {
+      debug('AnkiParseReviewProfile', {
+        readonlyConfigMs,
+        readContextReadyMs,
+        readonlyConfigStatus: readonlyConfigSummary.status,
+        totalTerms: termContexts.size,
+      });
+
       return buildResolutionMapFromTerms(vocabulary, termContexts, () =>
         createConfigInsufficientResolution(),
       );
@@ -75,25 +95,31 @@ export class AnkiReviewBackend implements ReviewBackend {
 
     const lookupConfigs = getLookupConfigs(readonlyConfigSummary.mergedConfigs);
     const plans = createLookupPlans(termContexts, lookupConfigs);
+    const resolvePlanNoteIdsStartedAt = performance.now();
     const planLookupResult = await this._repository.resolvePlanNoteIds(plans);
+    const resolvePlanNoteIdsMs = performance.now() - resolvePlanNoteIdsStartedAt;
+    const readNotesIndexedStartedAt = performance.now();
     const notesLookupResult = await this._repository.readNotesIndexed(
       getUniqueIds(planLookupResult.noteIdsByPlanKey.values()),
     );
+    const readNotesIndexedMs = performance.now() - readNotesIndexedStartedAt;
     const notesById = notesLookupResult.notesById;
+    const primeModelTemplatesMs = 0;
 
-    await this._repository.primeModelTemplates(
-      Array.from(new Set(Array.from(notesById.values(), (note) => note.modelName))),
-    );
-
+    const readCardsIndexedStartedAt = performance.now();
     const cardsLookupResult = await this._repository.readCardsIndexed(
       getUniqueIds(Array.from(notesById.values(), (note) => note.cards)),
     );
+    const readCardsIndexedMs = performance.now() - readCardsIndexedStartedAt;
     const cardsById = cardsLookupResult.cardsById;
+    const readIntervalsIndexedStartedAt = performance.now();
     const intervalsLookupResult = await this._repository.readIntervalsIndexed(
       Array.from(cardsById.keys()),
     );
+    const readIntervalsIndexedMs = performance.now() - readIntervalsIndexedStartedAt;
     const intervalsByCardId = intervalsLookupResult.intervalsByCardId;
     const resolutionsByTerm = new Map<string, ReviewTermResolution>();
+    const resolveTermsStartedAt = performance.now();
 
     for (const termContext of termContexts.values()) {
       const resolution = resolveTermFromIndexes({
@@ -110,16 +136,28 @@ export class AnkiReviewBackend implements ReviewBackend {
       resolutionsByTerm.set(termContext.termKey, resolution);
     }
 
+    const resolveTermsMs = performance.now() - resolveTermsStartedAt;
+
     this._lastParseMetrics = {
       cardsInfoRequests: cardsLookupResult.issuedCardsInfoRequests,
       findNotesRequests: planLookupResult.issuedFindNotesRequests,
       intervalRequests: intervalsLookupResult.issuedIntervalRequests,
       notesInfoRequests: notesLookupResult.issuedNotesInfoRequests,
+      primeModelTemplatesMs,
+      readCardsIndexedMs,
+      readContextReadyMs,
+      readIntervalsIndexedMs,
+      readNotesIndexedMs,
+      readonlyConfigMs,
+      resolvePlanNoteIdsMs,
+      resolveTermsMs,
       totalTerms: termContexts.size,
       uniqueCardIds: cardsById.size,
       uniqueNoteIds: notesById.size,
       uniqueQueries: planLookupResult.uniqueQueries,
     };
+
+    debug('AnkiParseReviewProfile', this._lastParseMetrics);
 
     return buildResolutionMapFromTerms(vocabulary, termContexts, (termKey) => {
       return resolutionsByTerm.get(termKey) ?? createUnmappedResolution();
@@ -371,7 +409,10 @@ export class AnkiReviewBackend implements ReviewBackend {
       ankiDeck: targetCard.deckName,
       ankiModel: targetCard.modelName,
       ankiTemplateOrd: targetCard.ord,
-      ankiTemplateName: this._repository.getTemplateName(targetCard.modelName, targetCard.ord),
+      ankiTemplateName: await this._repository.getTemplateNameLoaded(
+        targetCard.modelName,
+        targetCard.ord,
+      ),
     };
 
     if (!this.canRebuildSelectedGradeMetadata(currentTermMetadata, targetCardId)) {
